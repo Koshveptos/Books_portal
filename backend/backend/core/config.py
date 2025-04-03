@@ -3,7 +3,7 @@ from os import getenv
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    db_url: str = "postgresql+asyncpg://postgres:1809kazak@localhost:5432/books"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:12345678@localhost:5432/books_portal"
 
 
 

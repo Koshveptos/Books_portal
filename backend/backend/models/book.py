@@ -1,17 +1,14 @@
 from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import ForeignKey, Column, Integer, String, DateTime
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import  Mapped, mapped_column, relationship
+from models.base import Base
 
 
-class Base(DeclarativeBase):
-    pass
 
 
-class Books(Base):
-    __tablename__ = "book"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+class Book(Base):
+   # id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(50), index=True)
     author: Mapped[str] = mapped_column(String(255))
     year: Mapped[Optional[str]] = mapped_column(String(4), index=True)

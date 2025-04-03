@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from typing import Annotated
 
+import uvicorn
+
 
 
 from core.database import AsyncSessionLocal
@@ -18,6 +20,9 @@ app.include_router(books_router, prefix='/books', tags=['books'])
 async def root():
     return {"message": "Welcome to the Books API"}
 
+
+if __name__ == '__main__':
+    uvicorn.run(app, host='localhost', port=8000,log_level="debug")
 
 
 
