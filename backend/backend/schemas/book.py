@@ -18,6 +18,14 @@ class BookBase(BaseModel):
 class BookCreate(BookBase):
     pass
 
+class BookUpdate(BookCreate):
+    pass
+
+class BookPartial(BookUpdate):
+    title: str  | None = Field(None,max_length=50)
+    author: str | None = Field(None,max_length=50)
+    isbn: str | None = Field(None,max_length=20)
+    file_url: str | None = Field(None,max_length=255)
 class Book(BookBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
