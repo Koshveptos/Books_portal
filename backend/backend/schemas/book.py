@@ -32,3 +32,12 @@ class Book(BookBase):
 
 
 #class BookResource(BaseModel):
+
+class CategoryBase(BaseModel):
+    name_categories: str = Field(max_length=50, nullable=False )
+    description: str = Field(max_length=255)
+
+
+
+class TagBase(BaseModel):
+    name_tag:str = Field(max_length=50, nullable = False)
