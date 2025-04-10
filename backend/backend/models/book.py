@@ -10,15 +10,15 @@ from models.base import Base
 book_categories =  Table(
     "books_categories",
     Base.metadata,
-    Column('book_id' , ForeignKey('book.id')),
-    Column('categories_id', ForeignKey('categories.id'))
+    Column('book_id' , ForeignKey('books.id')),
+    Column('category_id', ForeignKey('categories.id'))
 )
 
 book_tags =  Table(
     "books_tags",
     Base.metadata,
-    Column('book_id' , ForeignKey('book.id')),
-    Column('tag_id', ForeignKey('tegs.id'))
+    Column('book_id' , ForeignKey('books.id')),
+    Column('tag_id', ForeignKey('tags.id'))
 )
 
 class Book(Base):
@@ -36,24 +36,24 @@ class Book(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now(UTC), onupdate=datetime.now(UTC), nullable=False)
     #rating: Mapped[Optional[float]] = mapped_column(default=0.0) /
     #views: Mapped[int] = mapped_column(default=0)
-    categories: Mapped[List[categories]] = relationship( secondary=book_categories, back_populates='books')
-    teg: Mapped[List[tegs]] = relationship( secondary=book_tags, back_populates='books')
+    categories: Mapped[List["Category"]] = relationship( secondary=book_categories, back_populates='books')
+    tags: Mapped[List["Tag"]] = relationship( secondary=book_tags, back_populates='books')
    
    
 
 
-class categories(Base):
+class Category(Base):
     name_categories: Mapped[str] = mapped_column(String(50), index=True,nullable=False, unique=True )
     description:Mapped[Optional[str] ] = mapped_column(String(255))
-    book:Mapped[List[Book]] = relationship(
+    books:Mapped[List["Book"]] = relationship(
         secondary=book_categories,back_populates='categories'
     )
 
 
-class tegs(Base):
+class Tag(Base):
     name_tag: Mapped[str] = mapped_column(String(50),index=True, nullable=False, unique=True )
-    book:Mapped[List[Book]] = relationship(
-        secondary=book_tags, back_populates='tegs'
+    books:Mapped[List["Book"]] = relationship(
+        secondary=book_tags, back_populates='tags'
     ) 
 
     

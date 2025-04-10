@@ -1,7 +1,9 @@
-
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
+from typing import TypeVar
+
+
 
 class BookBase(BaseModel):
     title: str = Field(max_length=50)
@@ -16,7 +18,9 @@ class BookBase(BaseModel):
 
 
 class BookCreate(BookBase):
-    pass
+    categories: List[int]= []
+    tags:  List[int] | None = []
+
 
 class BookUpdate(BookCreate):
     pass
@@ -29,15 +33,41 @@ class BookPartial(BookUpdate):
 class Book(BookBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    created_at: datetime
+    updated_at: datetime
+    categories: List["Category"] = Field(default_factory=  list)
+    tags: List['Tag'] | None = Field(default_factory=list)
+
+
 
 
 #class BookResource(BaseModel):
 
 class CategoryBase(BaseModel):
     name_categories: str = Field(max_length=50, nullable=False )
-    description: str = Field(max_length=255)
+    description: str | None = Field(None,max_length=255)
+
+
+class CategoryCreate(CategoryBase):
+    pass
+
+
+class Category(CategoryBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    books: List["Book"] = Field (default_factory=list)
+
 
 
 
 class TagBase(BaseModel):
     name_tag:str = Field(max_length=50, nullable = False)
+
+class TagCreate(TagBase):
+    pass
+
+
+class Tag(TagBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    books: List["Book"] = Field(default_factory=list)
