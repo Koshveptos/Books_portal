@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+
+# Виртуальное окружение
+venv/
+ENV/
+env/
+.venv/
+
+# Зависимости
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
+*.whl
+
+# Логи и базы данных
+*.log
+*.sqlite3
+*.db
+
+# Конфиденциальные данные
+.env
+.env.local
+.secrets
+*.key
+
+# IDE и редакторы
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Тестовые и временные файлы
+*.tmp
+*.bak
+*.swp
+*~
+
+# Pre-commit cache
+.pre-commit-cache/

@@ -1,21 +1,24 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.engine import Result
-from sqlalchemy import select, delete
-from models.book import Book, Category, Tag
-from schemas.book import Book as BookSchema, BookCreate, BookUpdate, BookPartial, CategoryCreate, TagCreate
 from core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException
+from models.book import Book, Category, Tag
+from schemas.book import Book as BookSchema
+from schemas.book import BookCreate, BookPartial, BookUpdate, CategoryCreate, TagCreate
+from sqlalchemy import delete, select
+from sqlalchemy.engine import Result
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 router = APIRouter()
 
-#@router.get("/{id}")
-#def get_book():
+# @router.get("/{id}")
+# def get_book():
 #    return {"ну рыбает и хули спотришь":"lol"}
 # TODO:
 # добавить views для обработки логики, но ток если роутов встанет многовато
 
-@router.get('/',response_model= list[BookSchema])
-async def get_books(db:AsyncSession = Depends(get_db)):
+
+@router.get("/", response_model=list[BookSchema])
+async def get_books(db: AsyncSession = Depends(get_db)):
     """
     Получить список всех книг.
     """
@@ -25,11 +28,11 @@ async def get_books(db:AsyncSession = Depends(get_db)):
         books = result.scalars().all()
         return list(books)
     except Exception as e:
-        print(f'Error: {str(e)}')
+        print(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get('/{book_id}', response_model=BookSchema )
+@router.get("/{book_id}", response_model=BookSchema)
 async def get_book(book_id: int, db: AsyncSession = Depends(get_db)):
     """
     Получить книгу по её ID.
@@ -39,9 +42,9 @@ async def get_book(book_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Book not found")
     return book
 
-    
-@router.post("/",response_model = BookSchema)
-async def create_book(book: BookCreate, db:AsyncSession = Depends(get_db)):
+
+@router.post("/", response_model=BookSchema)
+async def create_book(book: BookCreate, db: AsyncSession = Depends(get_db)):
     """
     Создать новую книгу.
     """
@@ -56,11 +59,11 @@ async def create_book(book: BookCreate, db:AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Book already exists")
     except Exception as e:
         await db.rollback()
-        print(f'Error: {str(e)}')
+        print(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
-@router.put('/{book_id}',response_model= BookSchema )
+@router.put("/{book_id}", response_model=BookSchema)
 async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = Depends(get_db)):
     """
     Полностью обновить книгу по её ID.
@@ -74,7 +77,6 @@ async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = 
     await db.refresh(book)
     return book
 
-           
 
 @router.patch("/{book_id}", response_model=BookSchema)
 async def partial_update_book(book_id: int, book_update: BookPartial, db: AsyncSession = Depends(get_db)):
@@ -108,8 +110,7 @@ async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
     return {"message": "Book deleted successfully"}
 
 
-
-@router.post('/category', response_model=CategoryCreate)
+@router.post("/category", response_model=CategoryCreate)
 async def create_category(category: CategoryCreate, db: AsyncSession = Depends(get_db)):
     """
     Создать категорию.
@@ -121,7 +122,7 @@ async def create_category(category: CategoryCreate, db: AsyncSession = Depends(g
     return category_db
 
 
-@router.post('/tag',response_model=TagCreate)
+@router.post("/tag", response_model=TagCreate)
 async def create_tag(tag: TagCreate, db: AsyncSession = Depends(get_db)):
     """
     Создать тег.
