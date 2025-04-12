@@ -1,6 +1,6 @@
 from logging.config import fileConfig
 
-from alembic import context, op
+from alembic import context
 from core.config import settings
 from models.base import Base
 from models.book import *  # noqa

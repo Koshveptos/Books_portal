@@ -1,5 +1,4 @@
 import uvicorn
-from core.database import AsyncSessionLocal, engine, init_db
 from fastapi import FastAPI
 from routers.books import router as books_router
 

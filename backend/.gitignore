@@ -42,3 +42,15 @@ pip-wheel-metadata/
 
 # Pre-commit cache
 .pre-commit-cache/
+
+
+
+
+# Alembic
+**/alembic.ini/
+/alembic.ini.bak
+**/cache/
+**/migrations/
+
+# Исключения для тестовых миграций (если нужно)
+!/migrations/versions/test_*.py

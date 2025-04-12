@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from models.book import Book, Category, Tag
 from schemas.book import Book as BookSchema
 from schemas.book import BookCreate, BookPartial, BookUpdate, CategoryCreate, TagCreate
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.engine import Result
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +54,7 @@ async def create_book(book: BookCreate, db: AsyncSession = Depends(get_db)):
         await db.commit()
         await db.refresh(db_book)
         return db_book
-    except IntegrityError as e:
+    except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="Book already exists")
     except Exception as e:

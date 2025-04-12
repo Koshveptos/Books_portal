@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from models.base import Base
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table
+from sqlalchemy import Column, DateTime, ForeignKey, String, Table
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 book_categories = Table(
