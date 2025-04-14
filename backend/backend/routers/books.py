@@ -42,16 +42,22 @@ async def get_book(book_id: int, db: AsyncSession = Depends(get_db)):
     """
     Получить книгу по её ID.
     """
-    logger.info("Get book by id")
-    query = select(Book).options(selectinload(Book.categories), selectinload(Book.tags)).where(Book.id == book_id)
-    result = await db.execute(query)
-    book = result.scalars().first()
-
-    if not book:
-        logger.error(f"Book with id {book_id} not found")
-        raise HTTPException(status_code=404, detail="Book not found")
-
-    return book
+    try:
+        logger.info("Get book by id")
+        query = select(Book).options(selectinload(Book.categories), selectinload(Book.tags)).where(Book.id == book_id)
+        result = await db.execute(query)
+        book = result.scalars().first()
+        if not book:
+            logger.error(f"Book with id {book_id} not found")
+            raise HTTPException(status_code=404, detail="Book not found")
+        return book
+    except HTTPException:
+        # пересылка ошибки что бы все не скатывалось в 500тую
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Unexpected error while creating book: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
 @router.post("/", response_model=BookResponse)
@@ -97,7 +103,9 @@ async def create_book(book: BookCreate, db: AsyncSession = Depends(get_db)):
         db_book.tags = await db.run_sync(lambda _: db_book.tags)
         logger.info(f"Book created successfully with ID: {db_book.id}")
         return db_book
-
+    except HTTPException:
+        # пересылка ошибки что бы все не скатывалось в 500тую
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("IntegrityError while creating book")
@@ -149,6 +157,9 @@ async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = 
         await db.refresh(book)
         logger.debug(f"Book with ID { book.id} seccessfully upgrade")
         return book
+    except HTTPException:
+        # пересылка ошибки что бы все не скатывалось в 500тую
+        raise
     except IntegrityError as e:
         await db.rollback()
         logger.error(f"IntegrityError while updating book: {str(e)}")
@@ -164,17 +175,53 @@ async def partial_update_book(book_id: int, book_update: BookPartial, db: AsyncS
     """
     Частично обновить книгу по её ID.
     """
-    book = await db.get(Book, book_id)
-    if not book:
-        raise HTTPException(status_code=404, detail="Book not found")
+    try:
+        logger.info(f"Partial update book with ID {book_id}")
+        query = select(Book).options(selectinload(Book.categories), selectinload(Book.tags)).where(Book.id == book_id)
+        result = await db.execute(query)
+        book = result.scalars().first()
+        if not book:
+            logger.error(f"Book with ID {book_id} does not exist")
+            raise HTTPException(status_code=404, detail="Book not found")
+        # по сути то же самое что и обычное обновление, ток отдельно проверяю все данные и связанные
+        update_data = book_update.model_dump(exclude={"tags", "categories"}, exclude_unset=True)
+        for name, value in update_data:
+            setattr(book, name, value)
+        # Обновляем категории, если они указаны в запросе
+        if book_update.categories is not None:
+            categories_result = await db.execute(select(Category).where(Category.id.in_(book_update.categories)))
+            categories = categories_result.scalars().all()
+            if len(categories) != len(book_update.categories):
+                missing_categories = set(book_update.categories) - set(c.id for c in categories)
+                logger.error(f"Missing categories: {missing_categories}")
+                raise HTTPException(status_code=400, detail=f"Categories {missing_categories} not found")
+            book.categories = categories
 
-    # Обновляем только указанные поля
-    for name, value in book_update.model_dump(exclude_unset=True).items():
-        setattr(book, name, value)
+        # Обновляем теги, если они указаны в запросе
+        if book_update.tags is not None:
+            tags_result = await db.execute(select(Tag).where(Tag.id.in_(book_update.tags)))
+            tags = tags_result.scalars().all()
 
-    await db.commit()
-    await db.refresh(book)
-    return book
+            if len(tags) != len(book_update.tags):
+                missing_tags = set(book_update.tags) - set(t.id for t in tags)
+                logger.error(f"Missing tags: {missing_tags}")
+                raise HTTPException(status_code=400, detail=f"Tags {missing_tags} not found")
+            book.tags = tags
+            await db.commit()
+            await db.refresh(book)
+            logger.debug(f"Book with ID { book.id} seccessfully upgrade")
+            return book
+    except HTTPException:
+        # пересылка ошибки что бы все не скатывалось в 500тую
+        raise
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"IntegrityError while updating book: {str(e)}")
+        raise HTTPException(status_code=400, detail="Book data if invalid or already exists")
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Unexpected error while updating books{e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
 @router.delete("/{book_id}", response_model=dict)
@@ -182,13 +229,22 @@ async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
     """
     Удалить книгу по её ID.
     """
-    book = await db.get(Book, book_id)
-    if not book:
-        raise HTTPException(status_code=404, detail="Book not found")
-
-    await db.delete(book)
-    await db.commit()
-    return {"message": "Book deleted successfully"}
+    try:
+        book = await db.get(Book, book_id)
+        if not book:
+            logger.error(f"Book with ID {book_id} nor found")
+            raise HTTPException(status_code=404, detail="Book not found")
+        await db.delete(book)
+        await db.commit()
+        logger.debug(f"Book with ID {book_id} successfully deleted")
+        return {"message": "Book deleted successfully"}
+    except HTTPException:
+        # пересылка ошибки что бы все не скатывалось в 500тую
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error deleting Book with ID {book_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
 @router.post("/category", response_model=CategoryCreate)
