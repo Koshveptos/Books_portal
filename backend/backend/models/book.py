@@ -29,9 +29,14 @@ class Book(Base):
     cover: Mapped[str | None] = mapped_column(String(255))
     language: Mapped[str | None] = mapped_column(String(50))
     file_url: Mapped[str] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now(UTC), nullable=False)
+    # Время создания (устанавливается один раз при создании записи)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    # Время обновления (обновляется при каждом изменении записи)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now(UTC), onupdate=datetime.now(UTC), nullable=False
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC), nullable=False
     )
     # rating: Mapped[Optional[float]] = mapped_column(default=0.0) /
     # views: Mapped[int] = mapped_column(default=0)

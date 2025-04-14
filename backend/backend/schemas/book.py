@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -34,8 +32,6 @@ class BookPartial(BookUpdate):
 class Book(BookBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    created_at: datetime
-    updated_at: datetime
     categories: list["Category"] = Field(default_factory=list)
     tags: list["Tag"] | None = Field(default_factory=list)
 
