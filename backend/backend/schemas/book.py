@@ -1,68 +1,80 @@
+from datetime import datetime
+from typing import List, Optional
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# Базовые схемы
 class BookBase(BaseModel):
     title: str = Field(max_length=50)
     author: str = Field(max_length=50)
-    year: str | None = Field(None, max_length=4)
-    publisher: str | None = Field(None, max_length=50)
+    year: Optional[str] = Field(None, max_length=4)
+    publisher: Optional[str] = Field(None, max_length=50)
     isbn: str = Field(max_length=20)
-    description: str | None = Field(None, max_length=1023)
-    cover: str | None = Field(None, max_length=255)
-    language: str | None = Field(None, max_length=50)
+    description: Optional[str] = Field(None, max_length=1023)
+    cover: Optional[str] = Field(None, max_length=255)
+    language: Optional[str] = Field(None, max_length=50)
     file_url: str = Field(max_length=255)
 
 
-class BookCreate(BookBase):
-    categories: list[int] = []
-    tags: list[int] | None = []
-
-
-class BookUpdate(BookCreate):
-    pass
-
-
-class BookPartial(BookUpdate):
-    title: str | None = Field(None, max_length=50)
-    author: str | None = Field(None, max_length=50)
-    isbn: str | None = Field(None, max_length=20)
-    file_url: str | None = Field(None, max_length=255)
-
-
-class Book(BookBase):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    categories: list["Category"] = Field(default_factory=list)
-    tags: list["Tag"] | None = Field(default_factory=list)
-
-
-# class BookResource(BaseModel):
-
-
+# Схемы для категорий и тегов
 class CategoryBase(BaseModel):
-    name_categories: str = Field(max_length=50, nullable=False)
-    description: str | None = Field(None, max_length=255)
+    name_categories: str = Field(max_length=50)
+    description: Optional[str] = Field(None, max_length=255)
+
+
+class TagBase(BaseModel):
+    name_tag: str = Field(max_length=50)
+
+
+# Схемы для создания
+class BookCreate(BookBase):
+    categories: List[int] = []  # Список ID категорий
+    tags: List[int] = []
 
 
 class CategoryCreate(CategoryBase):
     pass
 
 
-class Category(CategoryBase):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    books: list["Book"] = Field(default_factory=list)
-
-
-class TagBase(BaseModel):
-    name_tag: str = Field(max_length=50, nullable=False)
-
-
 class TagCreate(TagBase):
     pass
 
 
-class Tag(TagBase):
-    model_config = ConfigDict(from_attributes=True)
+# Схемы для ответов
+class CategoryResponse(CategoryBase):
     id: int
-    books: list["Book"] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TagResponse(TagBase):
+    id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BookResponse(BookBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    categories: List[CategoryResponse] = Field(default_factory=list)
+    tags: List[TagResponse] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Схемы для обновления
+class BookUpdate(BookCreate):
+    pass
+
+
+class BookPartial(BaseModel):
+    title: Optional[str] = Field(None, max_length=50)
+    author: Optional[str] = Field(None, max_length=50)
+    year: Optional[str] = Field(None, max_length=4)
+    publisher: Optional[str] = Field(None, max_length=50)
+    isbn: Optional[str] = Field(None, max_length=20)
+    description: Optional[str] = Field(None, max_length=1023)
+    cover: Optional[str] = Field(None, max_length=255)
+    language: Optional[str] = Field(None, max_length=50)
+    file_url: Optional[str] = Field(None, max_length=255)
+    categories: Optional[List[int]] = None
+    tags: Optional[List[int]] = None
