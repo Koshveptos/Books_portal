@@ -47,10 +47,11 @@ async def get_book(book_id: int, db: AsyncSession = Depends(get_db)):
         query = select(Book).options(selectinload(Book.categories), selectinload(Book.tags)).where(Book.id == book_id)
         result = await db.execute(query)
         book = result.scalars().first()
-        if not book:
+        if book:
+            return book
+        else:
             logger.error(f"Book with id {book_id} not found")
             raise HTTPException(status_code=404, detail="Book not found")
-        return book
     except HTTPException:
         # пересылка ошибки что бы все не скатывалось в 500тую
         raise
@@ -135,7 +136,7 @@ async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = 
             setattr(book, name, value)
         # обнова категорий
         # про обновление старые тэги и категории будут удалены и заменены на новые
-        if book_update.categories is not None:
+        if book_update.categories:
             categories_result = await db.execute(select(Category).where(Category.id.in_(book_update.categories)))
             categories = categories_result.scalars().all()
             if len(categories) != len(book_update.categories):
@@ -144,7 +145,7 @@ async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = 
                 raise HTTPException(status_code=400, detail=f"Categories {missing_categories} not found")
             book.categories = categories
         # обнова тэгов
-        if book_update.tags is not None:
+        if book_update.tags:
             tags_result = await db.execute(select(Tag).where(Tag.id.in_(book_update.tags)))
             tags = tags_result.scalars().all()
             if len(tags) != len(book_update.tags):
@@ -188,7 +189,7 @@ async def partial_update_book(book_id: int, book_update: BookPartial, db: AsyncS
         for name, value in update_data:
             setattr(book, name, value)
         # Обновляем категории, если они указаны в запросе
-        if book_update.categories is not None:
+        if book_update.categories:
             categories_result = await db.execute(select(Category).where(Category.id.in_(book_update.categories)))
             categories = categories_result.scalars().all()
             if len(categories) != len(book_update.categories):
@@ -198,7 +199,7 @@ async def partial_update_book(book_id: int, book_update: BookPartial, db: AsyncS
             book.categories = categories
 
         # Обновляем теги, если они указаны в запросе
-        if book_update.tags is not None:
+        if book_update.tags:
             tags_result = await db.execute(select(Tag).where(Tag.id.in_(book_update.tags)))
             tags = tags_result.scalars().all()
 
