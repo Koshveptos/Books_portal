@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from routers.books import router as books_router
+from routers.users import router as users_router
 
 # потом все подключения роутеров в один файл перекинуть и там настроить все
 
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan, title="Books Portal")
 
 app.include_router(books_router, prefix="/books", tags=["books"])
+app.include_router(users_router)
 
 
 @app.get("/")

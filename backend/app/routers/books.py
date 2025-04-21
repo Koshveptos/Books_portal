@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
 
+from core.auth import current_active_user, current_moderator_or_admin
 from core.database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from models.book import Book, Category, Tag
+from models.user import User
 from schemas.book import BookCreate, BookPartial, BookResponse, BookUpdate, CategoryCreate, TagCreate
 from sqlalchemy import select
 from sqlalchemy.engine import Result
@@ -21,7 +23,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=list[BookResponse])
-async def get_books(db: AsyncSession = Depends(get_db)):
+async def get_books(db: AsyncSession = Depends(get_db), user: User = Depends(current_active_user)):
     """
     Получить список всех книг.
     """
@@ -38,7 +40,7 @@ async def get_books(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{book_id}", response_model=BookResponse)
-async def get_book(book_id: int, db: AsyncSession = Depends(get_db)):
+async def get_book(book_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(current_active_user)):
     """
     Получить книгу по её ID.
     """
@@ -62,7 +64,7 @@ async def get_book(book_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/", response_model=BookResponse)
-async def create_book(book: BookCreate, db: AsyncSession = Depends(get_db)):
+async def create_book(book: BookCreate, db: AsyncSession = Depends(get_db), user: User = Depends(current_active_user)):
     """
     Создать новую книгу.
     """
@@ -118,7 +120,9 @@ async def create_book(book: BookCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/{book_id}", response_model=BookResponse)
-async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = Depends(get_db)):
+async def update_book(
+    book_id: int, book_update: BookUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(current_active_user)
+):
     """
     Полностью обновить книгу по её ID.
     """
@@ -172,7 +176,12 @@ async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = 
 
 
 @router.patch("/{book_id}", response_model=BookResponse)
-async def partial_update_book(book_id: int, book_update: BookPartial, db: AsyncSession = Depends(get_db)):
+async def partial_update_book(
+    book_id: int,
+    book_update: BookPartial,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     """
     Частично обновить книгу по её ID.
     """
@@ -226,9 +235,11 @@ async def partial_update_book(book_id: int, book_update: BookPartial, db: AsyncS
 
 
 @router.delete("/{book_id}", response_model=dict)
-async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_book(
+    book_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(current_moderator_or_admin)
+):
     """
-    Удалить книгу по её ID.
+    Удалить книгу по её ID. Доступно только для модераторов и администраторов.
     """
     try:
         book = await db.get(Book, book_id)
