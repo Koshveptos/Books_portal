@@ -21,8 +21,6 @@ def get_jwt_strategy() -> JWTStrategy:
         secret=ACCESS_TOKEN_SECRET,
         lifetime_seconds=3600,
         token_audience=["fastapi-users:auth"],
-        refresh_secret=REFRESH_TOKEN_SECRET,
-        refresh_lifetime_seconds=86400,
     )
 
 
@@ -35,8 +33,8 @@ auth_backend = AuthenticationBackend(
 
 
 # Настройка базы данных пользователей
-async def get_user_db(session: AsyncSession = Depends(get_db)):
-    yield SQLAlchemyUserDatabase(session, User)
+async def get_user_db(session: AsyncSession = Depends(get_db)) -> SQLAlchemyUserDatabase:
+    return SQLAlchemyUserDatabase(session, User)
 
 
 # Инициализация FastAPIUsers
@@ -44,7 +42,6 @@ fastapi_users = FastAPIUsers[User, int](
     get_user_db,
     [auth_backend],
 )
-
 
 # Получение текущего пользователя
 current_active_user = fastapi_users.current_user(active=True)

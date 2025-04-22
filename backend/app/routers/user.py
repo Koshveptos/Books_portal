@@ -1,8 +1,8 @@
-from auth import auth_backend, current_active_user
+from auth import auth_backend, current_active_user, fastapi_users, get_user_db
 from core.database import get_db
 from fastapi import Depends, HTTPException, status
 from models.user import User
-from schemas.user import LogoutResponse, TokenResponse
+from schemas.user import LogoutResponse, TokenResponse, UserCreate, UserRead
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -26,3 +26,18 @@ async def logout(user: User = Depends(current_active_user)) -> LogoutResponse:
 
 async def protected_route(user: User = Depends(current_active_user)) -> dict:
     return {"user": user.email}
+
+
+async def register(
+    user_create: UserCreate,
+    session: AsyncSession = Depends(get_db),
+) -> UserRead:
+    user_manager = fastapi_users.get_user_manager(Depends(get_user_db))
+    try:
+        created_user = await user_manager.create(user_create)
+        return UserRead(**created_user.dict())
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
