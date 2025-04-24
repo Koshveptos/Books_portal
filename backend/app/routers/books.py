@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from models.book import Book, Category, Tag
 from schemas.book import BookCreate, BookPartial, BookResponse, BookUpdate, CategoryCreate, TagCreate
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.engine import Result
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,119 @@ router = APIRouter()
 #    return {"ну рыбает и хули спотришь":"lol"}
 # TODO:
 # добавить views для обработки логики, но ток если роутов встанет многовато
+
+
+@router.post("/update-search-vectors")
+async def update_search_vectors(db: AsyncSession = Depends(get_db)):
+    try:
+        update_stmt = text(
+            """
+            UPDATE books
+            SET search_vector =
+                to_tsvector('russian', coalesce(title, '')) || ' ' ||
+                to_tsvector('russian', coalesce(author, '')) || ' ' ||
+                to_tsvector('russian', coalesce(description, ''))
+        """
+        )
+        await db.execute(update_stmt)
+        await db.commit()
+        return {"message": "Search vectors updated successfully"}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error updating search vectors: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
+# Эндпоинт для поиска
+@router.get("/search", response_model=list[BookResponse])
+async def search_books(query: str, db: AsyncSession = Depends(get_db)):
+    if not query or len(query.strip()) < 3:
+        raise HTTPException(status_code=400, detail="Query must be at least 3 characters long")
+
+    # Используем plainto_tsquery вместо ручного форматирования
+    sql = """
+        SELECT b.id, b.title, b.author, b.year, b.publisher, b.isbn,
+               b.description, b.cover, b.language, b.file_url,
+               b.created_at, b.updated_at,
+               array_agg(DISTINCT c.name_categories) as category_names,
+               array_agg(DISTINCT t.name_tag) as tag_names,
+               ts_rank(b.search_vector, plainto_tsquery('russian', :query)) as rank
+        FROM books b
+        LEFT JOIN books_categories bc ON b.id = bc.book_id
+        LEFT JOIN categories c ON bc.category_id = c.id
+        LEFT JOIN books_tags bt ON b.id = bt.book_id
+        LEFT JOIN tags t ON bt.tag_id = t.id
+        WHERE b.search_vector @@ plainto_tsquery('russian', :query)
+        GROUP BY b.id
+        ORDER BY rank DESC
+        LIMIT 10
+    """
+
+    result = await db.execute(text(sql), {"query": query})
+    rows = result.fetchall()
+
+    # Получаем полные объекты категорий и тегов
+    books = []
+    for row in rows:
+        # Получаем полные объекты категорий
+        categories_result = await db.execute(select(Category).where(Category.name_categories.in_(row.category_names)))
+        categories = categories_result.scalars().all()
+
+        # Получаем полные объекты тегов
+        tags_result = await db.execute(select(Tag).where(Tag.name_tag.in_(row.tag_names)))
+        tags = tags_result.scalars().all()
+
+        book = BookResponse(
+            id=row.id,
+            title=row.title,
+            author=row.author,
+            year=row.year,
+            publisher=row.publisher,
+            isbn=row.isbn,
+            description=row.description,
+            cover=row.cover,
+            language=row.language,
+            file_url=row.file_url,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            categories=categories,
+            tags=tags,
+        )
+        books.append(book)
+    return books
+
+
+# Эндпоинт для автокоррекции
+@router.get("/suggest", response_model=list[str])
+async def suggest_corrections(query: str, db: AsyncSession = Depends(get_db)):
+    if not query or len(query.strip()) < 3:
+        return []
+
+    sql = """
+        SELECT word, similarity
+        FROM (
+            SELECT title as word, similarity(title, :query) as similarity
+            FROM books
+            WHERE title % :query
+            UNION
+            SELECT author as word, similarity(author, :query) as similarity
+            FROM books
+            WHERE author % :query
+            UNION
+            SELECT name_categories as word, similarity(name_categories, :query) as similarity
+            FROM categories
+            WHERE name_categories % :query
+            UNION
+            SELECT name_tag as word, similarity(name_tag, :query) as similarity
+            FROM tags
+            WHERE name_tag % :query
+        ) as words
+        WHERE similarity > 0.3
+        ORDER BY similarity DESC
+        LIMIT 5
+    """
+    result = await db.execute(text(sql), {"query": query.strip()})
+    return [row.word for row in result.fetchall()]
 
 
 @router.get("/", response_model=list[BookResponse])

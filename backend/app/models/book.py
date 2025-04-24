@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from models.base import Base
 from sqlalchemy import Column, DateTime, ForeignKey, String, Table
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 book_categories = Table(
@@ -29,6 +30,7 @@ class Book(Base):
     cover: Mapped[str | None] = mapped_column(String(255))
     language: Mapped[str | None] = mapped_column(String(50))
     file_url: Mapped[str] = mapped_column(String(255))
+    search_vector: Mapped[TSVECTOR | None] = mapped_column(TSVECTOR, nullable=True)
     # Время создания (устанавливается один раз при создании записи)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
@@ -48,8 +50,14 @@ class Category(Base):
     name_categories: Mapped[str] = mapped_column(String(50), index=True, nullable=False, unique=True)
     description: Mapped[str | None] = mapped_column(String(255))
     books: Mapped[list[Book]] = relationship(secondary=book_categories, back_populates="categories")
+    search_vector: Mapped[TSVECTOR | None] = mapped_column(TSVECTOR, nullable=True)
 
 
 class Tag(Base):
     name_tag: Mapped[str] = mapped_column(String(50), index=True, nullable=False, unique=True)
     books: Mapped[list[Book]] = relationship(secondary=book_tags, back_populates="tags")
+    search_vector: Mapped[TSVECTOR | None] = mapped_column(TSVECTOR, nullable=True)
+
+    # __table_args__ = (
+    #     {"postgresql_using": "gin", "postgresql_columns": ["search_vector"]},
+    # )
