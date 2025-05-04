@@ -1,0 +1,27 @@
+   version: '3'
+   
+   services:
+     api:
+       build: ./backend
+       ports:
+         - "8000:8000"
+       volumes:
+         - ./backend:/app
+       environment:
+         - DATABASE_URL=postgresql://postgres:postgres@db:5432/books_db
+       depends_on:
+         - db
+   
+     db:
+       image: postgres:15
+       volumes:
+         - postgres_data:/var/lib/postgresql/data
+       environment:
+         - POSTGRES_USER=postgres
+         - POSTGRES_PASSWORD=postgres
+         - POSTGRES_DB=books_db
+       ports:
+         - "5432:5432"
+   
+   volumes:
+     postgres_data:

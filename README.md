@@ -46,9 +46,7 @@
 
 ### 📋 Предварительные требования
 
-- Docker и Docker Compose
-- Python 3.11+
-- Telegram Bot Token
+- Docker Desktop
 
 ### ⚙️ Установка и запуск
 
@@ -57,31 +55,81 @@
 ```bash
 git clone https://github.com/Koshveptos/Books_portal.git
 cd Books_portal
-## ⚙️ Установка и запуск
-
-### 1. Скопируйте `.env` файл и настройте переменные
-
-
-cp .env.example .env
-# Отредактируйте .env файл под свою конфигурацию
 ```
 
-### 2. Запустите контейнеры
+2. Создайте файл `backend/Dockerfile` со следующим содержимым:
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Установка необходимых системных зависимостей
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml .
+COPY app/ ./app/
+
+# Установка poetry и замена psycopg2 на psycopg2-binary
+RUN pip install poetry && \
+    poetry config virtualenvs.create false && \
+    sed -i 's/psycopg2 (>=2.9.10,<3.0.0)/psycopg2-binary (>=2.9.10,<3.0.0)/g' pyproject.toml && \
+    poetry install
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+3. Создайте файл `docker-compose.yml` в корне проекта:
+
+```yaml
+services:
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/books_db
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=books_db
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres_data:
+```
+
+4. Запустите контейнеры:
 
 ```bash
-docker-compose up -d --build
+docker compose up --build
 ```
 
 Будут запущены:
 
 - 🌐 API сервер: http://localhost:8000
 - 🛢️ PostgreSQL: localhost:5432
-- 🧭 PgAdmin (опционально): localhost:5050
 
-### 3. Примените миграции
+5. В отдельном терминале примените миграции (если они созданы):
 
 ```bash
-docker-compose exec backend alembic upgrade head
+docker compose exec api alembic upgrade head
 ```
 
 ---
@@ -216,29 +264,34 @@ curl -X POST "http://localhost:8000/api/v1/telegram/set_webhook?url=https://your
 ### Просмотр логов
 
 ```bash
-docker-compose logs -f backend
+docker compose logs -f api
 ```
 
 ### Остановка сервисов
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
-### Полная очистка
+### Полная очистка (включая данные базы)
 
 ```bash
-docker-compose down -v
+docker compose down -v
 ```
 
 ### Доступ к базе данных
 
 ```bash
-docker-compose exec db psql -U your_user -d books_db
+docker compose exec db psql -U postgres -d books_db
+```
+
+### Перезапуск только API сервера
+
+```bash
+docker compose restart api
 ```
 
 ---
-
 
 ## 📄 Лицензия
 
