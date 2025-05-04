@@ -2,12 +2,12 @@ import time
 from contextlib import asynccontextmanager
 
 import uvicorn
-from core.logger_config import logger
+from app.core.logger_config import logger
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from routers.books import router as books_router
-from services.user_servise import router as auth_router
+from app.routers.books import router as books_router
+from app.services.user_servise import router as auth_router
 
 # потом все подключения роутеров в один файл перекинуть и там настроить все
 
