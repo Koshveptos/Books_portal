@@ -13,12 +13,6 @@ from sqlalchemy.orm import selectinload
 
 router = APIRouter()
 
-# @router.get("/{id}")
-# def get_book():
-#    return {"ну рыбает и хули спотришь":"lol"}
-# TODO:
-# добавить views для обработки логики, но ток если роутов встанет многовато
-
 
 @router.post("/update-search-vectors")
 async def update_search_vectors(db: AsyncSession = Depends(get_db)):

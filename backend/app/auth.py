@@ -40,11 +40,22 @@ async def get_user_db(session: AsyncSession = Depends(get_db)) -> SQLAlchemyUser
 class UserManager(BaseUserManager[User, int]):
     async def create(self, user_create, **kwargs):
         user_dict = user_create.dict(exclude_unset=True)
+        # Запрещаем регистрацию с is_moderator=True или is_superuser=True
+        if user_dict.get("is_moderator", False) or user_dict.get("is_superuser", False):
+            raise ValueError("Cannot register as moderator or superuser")
         password = user_dict.pop("password")
         user_dict["hashed_password"] = self.password_helper.hash(password)
         created_user = await self.user_db.create(user_dict)
         await self.on_after_register(created_user, None)
         return created_user
+
+    async def update(self, user_update, user, **kwargs):
+        # Проверяем, что только суперпользователь может менять is_moderator или is_superuser
+        if not user.is_superuser:
+            user_dict = user_update.dict(exclude_unset=True)
+            if "is_moderator" in user_dict or "is_superuser" in user_dict:
+                raise ValueError("Only superusers can update moderator or superuser status")
+        return await super().update(user_update, user, **kwargs)
 
 
 async def get_user_manager(user_db=Depends(get_user_db)):

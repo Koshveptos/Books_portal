@@ -26,7 +26,13 @@ async def logout(user: User = Depends(current_active_user)) -> LogoutResponse:
 
 
 async def protected_route(user: User = Depends(current_active_user)) -> dict:
-    return {"user": user.email}
+    return {
+        "user": user.email,
+        "is_active": user.is_active,
+        "is_superuser": user.is_superuser,
+        "is_verified": user.is_verified,
+        "is_moderator": user.is_moderator,
+    }
 
 
 async def register(
@@ -35,11 +41,16 @@ async def register(
 ) -> UserRead:
     try:
         created_user = await user_manager.create(user_create)
-        return UserRead.from_orm(created_user)
+        return UserRead.model_validate(created_user)
     except UserAlreadyExists:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User with this email already exists",
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
         )
     except Exception as e:
         raise HTTPException(
