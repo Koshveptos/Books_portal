@@ -7,12 +7,13 @@ from core.logger_config import logger
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from routers.auth import router as auth_router
 from routers.authors import router as authors_router
 from routers.books import router as books_router
 from routers.categories import router as categories_router
+from routers.search import router as search_router
 from routers.tags import router as tags_router
 from routers.user import router as users_router
-from services.user_servise import router as auth_router
 
 # потом все подключения роутеров в один файл перекинуть и там настроить все
 
@@ -32,6 +33,7 @@ app.include_router(categories_router, prefix="/categories", tags=["categories"])
 app.include_router(tags_router, prefix="/tags", tags=["tags"])
 app.include_router(users_router, prefix="/users", tags=["users"])
 app.include_router(auth_router)
+app.include_router(search_router, prefix="/search", tags=["search"])
 
 
 @app.get("/")

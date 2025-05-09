@@ -10,10 +10,9 @@ from core.logger_config import logger
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_users.exceptions import UserAlreadyExists
 from models.user import User
-from repositories.user import UserRepository
 from schemas.user import ChangeUserStatusRequest, LogoutResponse, TokenResponse, UserCreate, UserRead
+from services.user_service import UserService
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 
 # Определение роутера
 router = APIRouter(tags=["users"])
@@ -84,13 +83,13 @@ async def register(
 async def change_user_status(
     id: UUID,
     change_status_req: ChangeUserStatusRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(check_admin),
 ) -> UserRead:
     try:
         # Проверка наличия пользователя
-        user_repo = UserRepository(db)
-        user = user_repo.get_by_id(id)
+        user_service = UserService(db)
+        user = await user_service.get_by_id(id)
         if not user:
             logger.warning(f"Attempted to change status for non-existent user with id: {id}")
             raise HTTPException(
@@ -118,15 +117,14 @@ async def change_user_status(
             logger.info(f"Changing status for user {user.email}: {update_data}")
             for key, value in update_data.items():
                 setattr(user, key, value)
-            db.commit()
-            db.refresh(user)
+            await user_service.update(user)
 
         return UserRead.model_validate(user)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error changing status for user {id}: {str(e)}")
-        db.rollback()
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error changing user status",
