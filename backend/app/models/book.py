@@ -3,7 +3,9 @@ from __future__ import annotations
 import enum
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Table
+from sqlalchemy import Column, DateTime
+from sqlalchemy import Enum as SAEnum
+from sqlalchemy import ForeignKey, Integer, String, Table
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -11,9 +13,31 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 Base = declarative_base()
 
 
-class Language(enum.Enum):
+class Language(str, enum.Enum):
+    """
+    Перечисление языков книг.
+    Обратите внимание: значения должны быть в нижнем регистре для PostgreSQL!
+    """
+
     RU = "ru"
     EN = "en"
+
+    def __str__(self):
+        return self.value
+
+    @classmethod
+    def _missing_(cls, value):
+        # Обрабатываем случай, когда передано значение в неправильном регистре
+        if isinstance(value, str):
+            # Попробуем найти по верхнему регистру
+            for member in cls:
+                if member.name == value.upper():
+                    return member
+            # Или по нижнему регистру
+            for member in cls:
+                if member.value == value.lower():
+                    return member
+        return None
 
 
 # Промежуточная таблица для связи многие-ко-многим между книгами и категориями
@@ -50,7 +74,11 @@ class Book(Base):
     isbn: Mapped[str] = mapped_column(String(20), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1023))
     cover: Mapped[str | None] = mapped_column(String(255))
-    language: Mapped[Language] = mapped_column(Enum(Language), nullable=False, default=Language.RU)
+    language: Mapped[Language] = mapped_column(
+        SAEnum(Language, values_callable=lambda x: [e.value for e in x], name="language"),
+        nullable=False,
+        default=Language.RU,
+    )
     file_url: Mapped[str] = mapped_column(String(255), nullable=False)
     search_vector: Mapped[TSVECTOR | None] = mapped_column(TSVECTOR, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

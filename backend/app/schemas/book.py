@@ -1,8 +1,9 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
+from loguru import logger
 from models.book import Language
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # Базовые схемы
@@ -17,8 +18,33 @@ class BookBase(BaseModel):
     isbn: str = Field(max_length=20)
     description: Optional[str] = Field(None, max_length=1023)
     cover: Optional[str] = Field(None, max_length=255)
-    language: Language = Field(default=Language.RU)
+    language: str = Field(default="ru", description="Book language, 'ru' or 'en'")
     file_url: str = Field(max_length=255)
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language_to_lowercase_string(cls, v: Any) -> str:
+        logger.debug(f"Pydantic validator normalize_language_to_lowercase_string received: {v} (type: {type(v)})")
+        if v is None:
+            logger.debug("Pydantic validator returning default 'ru' for None input.")
+            return "ru"  # Значение по умолчанию
+
+        value_str = ""
+        if isinstance(v, Language):  # Если это наш Language enum из models.book
+            value_str = v.value  # Используем .value ('ru' или 'en')
+            logger.debug(f"Input is Language enum, value_str set to: {value_str}")
+        elif isinstance(v, str):
+            value_str = v.lower()
+            logger.debug(f"Input is string, value_str (lowercased) set to: {value_str}")
+        else:
+            value_str = str(v).lower()
+            logger.debug(f"Input is other type, value_str (converted and lowercased) set to: {value_str}")
+
+        if value_str not in ["ru", "en"]:
+            logger.error(f"Invalid language value after normalization: '{value_str}'. Raising ValueError.")
+            raise ValueError(f"Invalid language: '{value_str}'. Must be 'ru' or 'en'.")
+        logger.debug(f"Pydantic validator returning: {value_str}")
+        return value_str
 
 
 # Схемы для категорий и тегов
@@ -73,6 +99,7 @@ class BookResponse(BookBase):
     authors: List[AuthorResponse] = Field(default_factory=list)
     categories: List[CategoryResponse] = Field(default_factory=list)
     tags: List[TagResponse] = Field(default_factory=list)
+    language: Language
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -88,11 +115,38 @@ class BookPartial(BaseModel):
     isbn: Optional[str] = Field(None, max_length=20)
     description: Optional[str] = Field(None, max_length=1023)
     cover: Optional[str] = Field(None, max_length=255)
-    language: Optional[Language] = None
+    language: Optional[str] = Field(None, description="Book language, 'ru' or 'en'")
     file_url: Optional[str] = Field(None, max_length=255)
     authors: Optional[List[int]] = None
     categories: Optional[List[int]] = None
     tags: Optional[List[int]] = None
+
+    @field_validator("language", check_fields=False)
+    @classmethod
+    def normalize_optional_language_to_lowercase_string(cls, v: Any) -> Optional[str]:
+        logger.debug(
+            f"Pydantic validator normalize_optional_language_to_lowercase_string received: {v} (type: {type(v)})"
+        )
+        if v is None:
+            logger.debug("Pydantic validator returning None for optional language.")
+            return None
+
+        value_str = ""
+        if isinstance(v, Language):
+            value_str = v.value
+            logger.debug(f"Optional input is Language enum, value_str set to: {value_str}")
+        elif isinstance(v, str):
+            value_str = v.lower()
+            logger.debug(f"Optional input is string, value_str (lowercased) set to: {value_str}")
+        else:
+            value_str = str(v).lower()
+            logger.debug(f"Optional input is other type, value_str (converted and lowercased) set to: {value_str}")
+
+        if value_str not in ["ru", "en"]:
+            logger.error(f"Invalid optional language value after normalization: '{value_str}'. Raising ValueError.")
+            raise ValueError(f"Invalid language: '{value_str}'. Must be 'ru' or 'en'.")
+        logger.debug(f"Pydantic validator returning for optional: {value_str}")
+        return value_str
 
 
 # Схемы для Автора
