@@ -1,6 +1,6 @@
 from auth import auth_backend, fastapi_users
 from fastapi import APIRouter
-from routers.user import logout, protected_route, refresh_token, register
+from routers.user import change_user_status, logout, protected_route, refresh_token, register
 from schemas.user import LogoutResponse, TokenResponse, UserRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -47,4 +47,12 @@ router.add_api_route(
     protected_route,
     methods=["GET"],
     response_model=dict,
+)
+
+# Маршрут для изменения статуса пользователя (доступен только админам)
+router.add_api_route(
+    "/users/{id}/status",
+    change_user_status,
+    methods=["PATCH"],
+    response_model=UserRead,
 )

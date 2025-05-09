@@ -1,10 +1,19 @@
 from datetime import UTC, datetime
 
+from auth import current_active_user
 from core.database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
-from models.book import Book, Category, Tag
-from schemas.book import BookCreate, BookPartial, BookResponse, BookUpdate, CategoryCreate, TagCreate
+from models.book import Author, Book, Category, Tag
+from models.user import User
+from schemas.book import (
+    BookCreate,
+    BookPartial,
+    BookResponse,
+    BookUpdate,
+    CategoryCreate,
+    TagCreate,
+)
 from sqlalchemy import select, text
 from sqlalchemy.engine import Result
 from sqlalchemy.exc import IntegrityError
@@ -15,14 +24,18 @@ router = APIRouter()
 
 
 @router.post("/update-search-vectors")
-async def update_search_vectors(db: AsyncSession = Depends(get_db)):
+async def update_search_vectors(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
         update_stmt = text(
             """
             UPDATE books
             SET search_vector =
                 to_tsvector('russian', coalesce(title, '')) || ' ' ||
-                to_tsvector('russian', coalesce(author, '')) || ' ' ||
                 to_tsvector('russian', coalesce(description, ''))
         """
         )
@@ -35,24 +48,29 @@ async def update_search_vectors(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
-# Эндпоинт для поиска
 @router.get("/search", response_model=list[BookResponse])
-async def search_books(query: str, db: AsyncSession = Depends(get_db)):
+async def search_books(
+    query: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     if not query or len(query.strip()) < 3:
         raise HTTPException(status_code=400, detail="Query must be at least 3 characters long")
 
-    # Используем plainto_tsquery вместо ручного форматирования
     sql = """
-        SELECT b.id, b.title, b.author, b.year, b.publisher, b.isbn,
+        SELECT b.id, b.title, b.year, b.publisher, b.isbn,
                b.description, b.cover, b.language, b.file_url,
                b.created_at, b.updated_at,
+               array_agg(DISTINCT a.id) as author_ids,
                array_agg(DISTINCT c.name_categories) as category_names,
                array_agg(DISTINCT t.name_tag) as tag_names,
                ts_rank(b.search_vector, plainto_tsquery('russian', :query)) as rank
         FROM books b
-        LEFT JOIN books_categories bc ON b.id = bc.book_id
+        LEFT JOIN book_authors ba ON b.id = ba.book_id
+        LEFT JOIN authors a ON ba.author_id = a.id
+        LEFT JOIN book_categories bc ON b.id = bc.book_id
         LEFT JOIN categories c ON bc.category_id = c.id
-        LEFT JOIN books_tags bt ON b.id = bt.book_id
+        LEFT JOIN book_tags bt ON b.id = bt.book_id
         LEFT JOIN tags t ON bt.tag_id = t.id
         WHERE b.search_vector @@ plainto_tsquery('russian', :query)
         GROUP BY b.id
@@ -63,9 +81,12 @@ async def search_books(query: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(text(sql), {"query": query})
     rows = result.fetchall()
 
-    # Получаем полные объекты категорий и тегов
     books = []
     for row in rows:
+        # Получаем полные объекты авторов
+        authors_result = await db.execute(select(Author).where(Author.id.in_(row.author_ids)))
+        authors = authors_result.scalars().all()
+
         # Получаем полные объекты категорий
         categories_result = await db.execute(select(Category).where(Category.name_categories.in_(row.category_names)))
         categories = categories_result.scalars().all()
@@ -77,7 +98,6 @@ async def search_books(query: str, db: AsyncSession = Depends(get_db)):
         book = BookResponse(
             id=row.id,
             title=row.title,
-            author=row.author,
             year=row.year,
             publisher=row.publisher,
             isbn=row.isbn,
@@ -87,6 +107,7 @@ async def search_books(query: str, db: AsyncSession = Depends(get_db)):
             file_url=row.file_url,
             created_at=row.created_at,
             updated_at=row.updated_at,
+            authors=authors,
             categories=categories,
             tags=tags,
         )
@@ -94,9 +115,12 @@ async def search_books(query: str, db: AsyncSession = Depends(get_db)):
     return books
 
 
-# Эндпоинт для автокоррекции
 @router.get("/suggest", response_model=list[str])
-async def suggest_corrections(query: str, db: AsyncSession = Depends(get_db)):
+async def suggest_corrections(
+    query: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     if not query or len(query.strip()) < 3:
         return []
 
@@ -107,9 +131,9 @@ async def suggest_corrections(query: str, db: AsyncSession = Depends(get_db)):
             FROM books
             WHERE title % :query
             UNION
-            SELECT author as word, similarity(author, :query) as similarity
-            FROM books
-            WHERE author % :query
+            SELECT name as word, similarity(name, :query) as similarity
+            FROM authors
+            WHERE name % :query
             UNION
             SELECT name_categories as word, similarity(name_categories, :query) as similarity
             FROM categories
@@ -128,30 +152,45 @@ async def suggest_corrections(query: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/", response_model=list[BookResponse])
-async def get_books(db: AsyncSession = Depends(get_db)):
+async def get_books(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     """
     Получить список всех книг.
     """
     try:
         logger.info("Get all books")
-        query = select(Book).order_by(Book.id).options(selectinload(Book.categories), selectinload(Book.tags))
+        query = (
+            select(Book)
+            .order_by(Book.id)
+            .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
+        )
         result: Result = await db.execute(query)
         books = result.scalars().all()
-        logger.debug("All books got seccessfully")
+        logger.debug("All books got successfully")
         return list(books)
     except Exception as e:
-        logger.error(f"Interal server error {e}")
+        logger.error(f"Internal server error {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{book_id}", response_model=BookResponse)
-async def get_book(book_id: int, db: AsyncSession = Depends(get_db)):
+async def get_book(
+    book_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     """
     Получить книгу по её ID.
     """
     try:
         logger.info("Get book by id")
-        query = select(Book).options(selectinload(Book.categories), selectinload(Book.tags)).where(Book.id == book_id)
+        query = (
+            select(Book)
+            .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
+            .where(Book.id == book_id)
+        )
         result = await db.execute(query)
         book = result.scalars().first()
         if book:
@@ -160,32 +199,47 @@ async def get_book(book_id: int, db: AsyncSession = Depends(get_db)):
             logger.error(f"Book with id {book_id} not found")
             raise HTTPException(status_code=404, detail="Book not found")
     except HTTPException:
-        # пересылка ошибки что бы все не скатывалось в 500тую
         raise
     except Exception as e:
         await db.rollback()
-        logger.error(f"Unexpected error while creating book: {str(e)}")
+        logger.error(f"Unexpected error while getting book: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
 @router.post("/", response_model=BookResponse)
-async def create_book(book: BookCreate, db: AsyncSession = Depends(get_db)):
+async def create_book(
+    book: BookCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     """
     Создать новую книгу.
     """
+    if not user.is_superuser and not user.is_moderator:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
         logger.debug(f"Start to create Book: {book.model_dump()}")
-        logger.debug("Get Tag and Categories from db")
-        # проверка  существования тегов
+        logger.debug("Get Authors, Tags and Categories from db")
+
+        # проверка существования авторов
+        authors_id = book.authors
+        authors_result = await db.execute(select(Author).where(Author.id.in_(authors_id)))
+        authors = authors_result.scalars().all()
+        if len(authors) != len(authors_id):
+            missing_authors = set(authors_id) - {a.id for a in authors}
+            logger.error(f"Missing some authors: {missing_authors}")
+            raise HTTPException(status_code=400, detail=f"Authors with IDs {missing_authors} do not exist")
+
+        # проверка существования тегов
         tags_id = book.tags
         tags_result = await db.execute(select(Tag).where(Tag.id.in_(tags_id)))
         tags = tags_result.scalars().all()
         if len(tags) != len(tags_id):
-            # если есть лишние несуществующие тэги и тд
             missing_tags = set(tags_id) - {t.id for t in tags}
             logger.error(f"Missing some tags: {missing_tags}")
             raise HTTPException(status_code=400, detail=f"Tags with IDs {missing_tags} do not exist")
 
+        # проверка существования категорий
         categories_id = book.categories
         categories_result = await db.execute(select(Category).where(Category.id.in_(categories_id)))
         categories = categories_result.scalars().all()
@@ -195,7 +249,8 @@ async def create_book(book: BookCreate, db: AsyncSession = Depends(get_db)):
             raise HTTPException(status_code=400, detail=f"Categories with IDs {missing_categories} do not exist")
 
         # Создание книги
-        db_book = Book(**book.model_dump(exclude={"categories", "tags"}))
+        db_book = Book(**book.model_dump(exclude={"authors", "categories", "tags"}))
+        db_book.authors = authors
         db_book.tags = tags
         db_book.categories = categories
         db_book.created_at = datetime.now(UTC)
@@ -205,14 +260,14 @@ async def create_book(book: BookCreate, db: AsyncSession = Depends(get_db)):
         await db.commit()
         await db.refresh(db_book)
 
-        # Явная загрузка связанных объектов тк до этго была ленивая и схема давала ошибку
+        # Явная загрузка связанных объектов
         db_book = await db.get(Book, db_book.id)
+        db_book.authors = await db.run_sync(lambda _: db_book.authors)
         db_book.categories = await db.run_sync(lambda _: db_book.categories)
         db_book.tags = await db.run_sync(lambda _: db_book.tags)
-        logger.info(f"Book created successfully with ID: {db_book.id}")
+        logger.info(f"Book created successfully with ID {db_book.id}")
         return db_book
     except HTTPException:
-        # пересылка ошибки что бы все не скатывалось в 500тую
         raise
     except IntegrityError:
         await db.rollback()
@@ -225,13 +280,24 @@ async def create_book(book: BookCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/{book_id}", response_model=BookResponse)
-async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = Depends(get_db)):
+async def update_book(
+    book_id: int,
+    book_update: BookUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     """
     Полностью обновить книгу по её ID.
     """
+    if not user.is_superuser and not user.is_moderator:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
         logger.info(f"Update informations about book{book_id}")
-        query = select(Book).options(selectinload(Book.categories), selectinload(Book.tags)).where(Book.id == book_id)
+        query = (
+            select(Book)
+            .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
+            .where(Book.id == book_id)
+        )
 
         result = await db.execute(query)
         book = result.scalars().first()
@@ -239,10 +305,20 @@ async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = 
             logger.error(f"Book with ID {book_id} does not exist")
             raise HTTPException(status_code=404, detail="Book not found")
 
-        for name, value in book_update.model_dump(exclude={"tags", "categories"}).items():
+        for name, value in book_update.model_dump(exclude={"authors", "tags", "categories"}).items():
             setattr(book, name, value)
-        # обнова категорий
-        # про обновление старые тэги и категории будут удалены и заменены на новые
+
+        # обновление авторов
+        if book_update.authors:
+            authors_result = await db.execute(select(Author).where(Author.id.in_(book_update.authors)))
+            authors = authors_result.scalars().all()
+            if len(authors) != len(book_update.authors):
+                missing_authors = set(book_update.authors) - set(a.id for a in authors)
+                logger.error(f"Missing authors{missing_authors}")
+                raise HTTPException(status_code=400, detail=f"Authors {missing_authors} not found")
+            book.authors = authors
+
+        # обновление категорий
         if book_update.categories:
             categories_result = await db.execute(select(Category).where(Category.id.in_(book_update.categories)))
             categories = categories_result.scalars().all()
@@ -251,7 +327,8 @@ async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = 
                 logger.error(f"Missing categories{missing_categories}")
                 raise HTTPException(status_code=400, detail=f"Categories {missing_categories} not found")
             book.categories = categories
-        # обнова тэгов
+
+        # обновление тегов
         if book_update.tags:
             tags_result = await db.execute(select(Tag).where(Tag.id.in_(book_update.tags)))
             tags = tags_result.scalars().all()
@@ -263,15 +340,14 @@ async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = 
 
         await db.commit()
         await db.refresh(book)
-        logger.debug(f"Book with ID { book.id} seccessfully upgrade")
+        logger.debug(f"Book with ID {book.id} successfully upgraded")
         return book
     except HTTPException:
-        # пересылка ошибки что бы все не скатывалось в 500тую
         raise
     except IntegrityError as e:
         await db.rollback()
         logger.error(f"IntegrityError while updating book: {str(e)}")
-        raise HTTPException(status_code=400, detail="Book data if invalid or already exists")
+        raise HTTPException(status_code=400, detail="Book data is invalid or already exists")
     except Exception as e:
         await db.rollback()
         logger.error(f"Unexpected error while updating books{e}")
@@ -279,24 +355,46 @@ async def update_book(book_id: int, book_update: BookUpdate, db: AsyncSession = 
 
 
 @router.patch("/{book_id}", response_model=BookResponse)
-async def partial_update_book(book_id: int, book_update: BookPartial, db: AsyncSession = Depends(get_db)):
+async def partial_update_book(
+    book_id: int,
+    book_update: BookPartial,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     """
     Частично обновить книгу по её ID.
     """
+    if not user.is_superuser and not user.is_moderator:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
         logger.info(f"Partial update book with ID {book_id}")
-        query = select(Book).options(selectinload(Book.categories), selectinload(Book.tags)).where(Book.id == book_id)
+        query = (
+            select(Book)
+            .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
+            .where(Book.id == book_id)
+        )
         result = await db.execute(query)
         book = result.scalars().first()
         if not book:
             logger.error(f"Book with ID {book_id} does not exist")
             raise HTTPException(status_code=404, detail="Book not found")
-        # по сути то же самое что и обычное обновление, ток отдельно проверяю все данные и связанные
-        update_data = book_update.model_dump(exclude={"tags", "categories"}, exclude_unset=True)
-        for name, value in update_data:
+
+        update_data = book_update.model_dump(exclude={"authors", "tags", "categories"}, exclude_unset=True)
+        for name, value in update_data.items():
             setattr(book, name, value)
+
+        # Обновляем авторов, если они указаны в запросе
+        if book_update.authors is not None:
+            authors_result = await db.execute(select(Author).where(Author.id.in_(book_update.authors)))
+            authors = authors_result.scalars().all()
+            if len(authors) != len(book_update.authors):
+                missing_authors = set(book_update.authors) - set(a.id for a in authors)
+                logger.error(f"Missing authors: {missing_authors}")
+                raise HTTPException(status_code=400, detail=f"Authors {missing_authors} not found")
+            book.authors = authors
+
         # Обновляем категории, если они указаны в запросе
-        if book_update.categories:
+        if book_update.categories is not None:
             categories_result = await db.execute(select(Category).where(Category.id.in_(book_update.categories)))
             categories = categories_result.scalars().all()
             if len(categories) != len(book_update.categories):
@@ -306,26 +404,25 @@ async def partial_update_book(book_id: int, book_update: BookPartial, db: AsyncS
             book.categories = categories
 
         # Обновляем теги, если они указаны в запросе
-        if book_update.tags:
+        if book_update.tags is not None:
             tags_result = await db.execute(select(Tag).where(Tag.id.in_(book_update.tags)))
             tags = tags_result.scalars().all()
-
             if len(tags) != len(book_update.tags):
                 missing_tags = set(book_update.tags) - set(t.id for t in tags)
                 logger.error(f"Missing tags: {missing_tags}")
                 raise HTTPException(status_code=400, detail=f"Tags {missing_tags} not found")
             book.tags = tags
-            await db.commit()
-            await db.refresh(book)
-            logger.debug(f"Book with ID { book.id} seccessfully upgrade")
-            return book
+
+        await db.commit()
+        await db.refresh(book)
+        logger.debug(f"Book with ID {book.id} successfully upgraded")
+        return book
     except HTTPException:
-        # пересылка ошибки что бы все не скатывалось в 500тую
         raise
     except IntegrityError as e:
         await db.rollback()
         logger.error(f"IntegrityError while updating book: {str(e)}")
-        raise HTTPException(status_code=400, detail="Book data if invalid or already exists")
+        raise HTTPException(status_code=400, detail="Book data is invalid or already exists")
     except Exception as e:
         await db.rollback()
         logger.error(f"Unexpected error while updating books{e}")
@@ -333,21 +430,26 @@ async def partial_update_book(book_id: int, book_update: BookPartial, db: AsyncS
 
 
 @router.delete("/{book_id}", response_model=dict)
-async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_book(
+    book_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     """
     Удалить книгу по её ID.
     """
+    if not user.is_superuser and not user.is_moderator:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
         book = await db.get(Book, book_id)
         if not book:
-            logger.error(f"Book with ID {book_id} nor found")
+            logger.error(f"Book with ID {book_id} not found")
             raise HTTPException(status_code=404, detail="Book not found")
         await db.delete(book)
         await db.commit()
         logger.debug(f"Book with ID {book_id} successfully deleted")
         return {"message": "Book deleted successfully"}
     except HTTPException:
-        # пересылка ошибки что бы все не скатывалось в 500тую
         raise
     except Exception as e:
         await db.rollback()
@@ -356,10 +458,16 @@ async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/category", response_model=CategoryCreate)
-async def create_category(category: CategoryCreate, db: AsyncSession = Depends(get_db)):
+async def create_category(
+    category: CategoryCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     """
     Создать категорию.
     """
+    if not user.is_superuser and not user.is_moderator:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     category_db = Category(**category.model_dump())
     db.add(category_db)
     await db.commit()
@@ -368,10 +476,16 @@ async def create_category(category: CategoryCreate, db: AsyncSession = Depends(g
 
 
 @router.post("/tag", response_model=TagCreate)
-async def create_tag(tag: TagCreate, db: AsyncSession = Depends(get_db)):
+async def create_tag(
+    tag: TagCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     """
     Создать тег.
     """
+    if not user.is_superuser and not user.is_moderator:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     tag_db = Tag(**tag.model_dump())
     db.add(tag_db)
     await db.commit()

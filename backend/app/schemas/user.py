@@ -24,3 +24,8 @@ class TokenResponse(BaseModel):
 
 class LogoutResponse(BaseModel):
     detail: str
+
+
+class ChangeUserStatusRequest(BaseModel):
+    is_moderator: Optional[bool] = None
+    is_superuser: Optional[bool] = None
