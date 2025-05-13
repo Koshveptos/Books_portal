@@ -6,7 +6,7 @@ from models.book import (
     Book,
 )
 from redis import Redis
-from schemas.recommendations import RecommendationType
+from schemas.recommendations import RecommendationStats, RecommendationType
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -681,3 +681,94 @@ class RecommendationService:
         except Exception as e:
             logger.error(f"Ошибка при объединении рекомендаций: {str(e)}", exc_info=True)
             return []
+
+    async def get_recommendation_stats(self, user_id: int) -> RecommendationStats:
+        """
+        Получить статистику для персональных рекомендаций.
+
+        Args:
+            user_id: ID пользователя
+
+        Returns:
+            RecommendationStats: Статистика рекомендаций
+        """
+        try:
+            # Получаем предпочтения пользователя
+            user_preferences = await self._get_user_preferences(user_id)
+
+            # Статистика по оценкам пользователя
+            ratings_stats_query = text(
+                """
+                SELECT
+                    COUNT(*) as rated_books_count,
+                    AVG(rating) as avg_rating
+                FROM ratings
+                WHERE user_id = :user_id
+            """
+            )
+
+            # Общее количество книг в системе
+            total_books_query = text(
+                """
+                SELECT COUNT(*) as total_books_count
+                FROM books
+            """
+            )
+
+            # Выполняем запросы
+            ratings_result = await self.db.execute(ratings_stats_query, {"user_id": user_id})
+            ratings_stats = ratings_result.fetchone()
+
+            total_books_result = await self.db.execute(total_books_query)
+            total_books = total_books_result.fetchone()
+
+            # Выбираем топ-5 авторов, категорий и тегов
+            authors = sorted(user_preferences.get("authors", {}).items(), key=lambda x: x[1]["weight"], reverse=True)[
+                :5
+            ]
+
+            categories = sorted(
+                user_preferences.get("categories", {}).items(), key=lambda x: x[1]["weight"], reverse=True
+            )[:5]
+
+            tags = sorted(user_preferences.get("tags", {}).items(), key=lambda x: x[1]["weight"], reverse=True)[:5]
+
+            # Определяем готовность системы к предоставлению рекомендаций
+            rated_books_count = ratings_stats.rated_books_count if ratings_stats else 0
+            is_collaborative_ready = rated_books_count >= 5  # Минимум 5 оценок для коллаборативной фильтрации
+            is_content_ready = (
+                len(user_preferences.get("authors", {})) > 0
+                or len(user_preferences.get("categories", {})) > 0
+                or len(user_preferences.get("tags", {})) > 0
+            )
+
+            # Формируем статистику
+            stats = RecommendationStats(
+                user_id=user_id,
+                rated_books_count=rated_books_count,
+                total_books_count=total_books.total_books_count if total_books else 0,
+                avg_rating=float(ratings_stats.avg_rating) if ratings_stats and ratings_stats.avg_rating else 0.0,
+                favorite_authors=[a[1]["name"] for a in authors],
+                favorite_categories=[c[1]["name"] for c in categories],
+                favorite_tags=[t[1]["name"] for t in tags],
+                is_collaborative_ready=is_collaborative_ready,
+                is_content_ready=is_content_ready,
+            )
+
+            logger.info(f"Получена статистика рекомендаций для пользователя {user_id}")
+            return stats
+
+        except Exception as e:
+            logger.error(f"Ошибка при получении статистики рекомендаций: {str(e)}", exc_info=True)
+            # Возвращаем пустую статистику в случае ошибки
+            return RecommendationStats(
+                user_id=user_id,
+                rated_books_count=0,
+                total_books_count=0,
+                avg_rating=0.0,
+                favorite_authors=[],
+                favorite_categories=[],
+                favorite_tags=[],
+                is_collaborative_ready=False,
+                is_content_ready=False,
+            )

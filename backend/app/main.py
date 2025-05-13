@@ -3,10 +3,14 @@ from contextlib import asynccontextmanager
 
 # Явный импорт моделей для инициализации
 import uvicorn
+
+# Исправлен импорт - в директории core файл конфигурации называется config, а не settings
+from core.config import settings
 from core.exceptions import BookPortalException
 from core.logger_config import logger
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 # Правильные импорты из 'routers' вместо 'routes'
@@ -14,6 +18,7 @@ from routers.auth import router as auth_router
 from routers.authors import router as authors_router
 from routers.books import router as books_router
 from routers.categories import router as categories_router
+from routers.recommendations import router as recommendations_router
 from routers.search import router as search_router
 from routers.tags import router as tags_router
 from routers.user import router as users_router
@@ -28,7 +33,20 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown...")
 
 
-app = FastAPI(lifespan=lifespan, title="Books Portal")
+app = FastAPI(
+    lifespan=lifespan,
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+)
+
+# Настраиваем CORS middleware для возможности запросов с фронтенда
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # В продакшене нужно ограничить список разрешенных источников
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Настраиваем и включаем все роутеры с правильными тегами
 app.include_router(books_router, prefix="/books", tags=["books"])
@@ -38,6 +56,7 @@ app.include_router(tags_router, prefix="/tags", tags=["tags"])
 app.include_router(users_router, prefix="/users", tags=["users"])
 app.include_router(auth_router)
 app.include_router(search_router, prefix="/search", tags=["search"])
+app.include_router(recommendations_router, prefix="/recommendations", tags=["recommendations"])
 
 
 @app.get("/")
@@ -121,4 +140,4 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="localhost", port=8000, log_level="debug")
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="debug")
