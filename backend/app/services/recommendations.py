@@ -38,7 +38,7 @@ class RecommendationService:
 
         Аргументы:
             user_id: ID пользователя
-            limit: Максимальное количество рекомендаций
+            limit: Максимальное количество рекомендаций (максимум 20)
             min_rating: Минимальный рейтинг книг
             min_year: Минимальный год издания
             max_year: Максимальный год издания
@@ -49,6 +49,11 @@ class RecommendationService:
         Возвращает:
             Список рекомендованных книг
         """
+        # Ограничиваем максимальное количество рекомендаций
+        if limit > 20:
+            logger.warning(f"Limiting recommendations from {limit} to 20")
+            limit = 20
+
         # Проверяем наличие кэшированных результатов, если необходимо кэширование
         if cache:
             cache_key = self.get_cache_key(
@@ -961,25 +966,36 @@ class RecommendationService:
 
     def cache_result(self, key, data, expire_seconds=3600):
         """
-        Сохраняет результат в кэш.
+        Кэширует результат в Redis.
 
-        Аргументы:
-            key: Ключ кэша
-            data: Данные для кэширования (будут сериализованы в JSON)
-            expire_seconds: Время жизни кэша в секундах
-
-        Возвращает:
-            bool: True если данные успешно сохранены, False в противном случае
+        Args:
+            key: Ключ для кэширования
+            data: Данные для кэширования
+            expire_seconds: Время жизни записи в секундах
         """
         if not self.redis_client:
-            return False
+            logger.debug("Redis client not available, skipping cache")
+            return
 
         try:
-            serialized = json.dumps(jsonable_encoder(data))
-            return self.redis_client.setex(key, expire_seconds, serialized)
+            # Преобразуем данные в JSON-совместимый формат с помощью jsonable_encoder
+            # и обрезаем результат, чтобы избежать ошибки с Content-Length
+            json_data = jsonable_encoder(data)
+
+            # Ограничиваем размер кэшируемых данных
+            if isinstance(json_data, list) and len(json_data) > 10:
+                logger.warning(f"Truncating cache data from {len(json_data)} to 10 items")
+                json_data = json_data[:10]
+
+            # Сериализуем в JSON
+            cached_value = json.dumps(json_data)
+
+            # Сохраняем в Redis
+            self.redis_client.setex(key, expire_seconds, cached_value)
+            logger.debug(f"Cached result with key: {key}, expires in {expire_seconds}s")
         except Exception as e:
-            logger.error(f"Error caching result with key {key}: {str(e)}")
-            return False
+            logger.error(f"Error caching result: {str(e)}")
+            # В случае ошибки просто продолжаем работу без кэширования
 
     def get_cached_result(self, key):
         """

@@ -23,6 +23,9 @@ from routers.auth import router as auth_router
 from routers.authors import router as authors_router
 from routers.books import router as books_router
 from routers.categories import router as categories_router
+from routers.favorites import router as favorites_router
+from routers.likes import router as likes_router
+from routers.ratings import router as ratings_router
 from routers.recommendations import router as recommendations_router
 from routers.search import router as search_router
 from routers.tags import router as tags_router
@@ -64,7 +67,10 @@ app.include_router(tags_router, prefix="/tags", tags=["tags"])
 app.include_router(users_router, prefix="/users", tags=["users"])
 app.include_router(auth_router)
 app.include_router(search_router, prefix="/search", tags=["search"])
-app.include_router(recommendations_router, prefix="/recommendations", tags=["recommendations"])
+app.include_router(recommendations_router)
+app.include_router(likes_router)
+app.include_router(favorites_router)
+app.include_router(ratings_router)
 
 
 @app.get("/")
