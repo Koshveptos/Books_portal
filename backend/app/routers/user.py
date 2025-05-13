@@ -1,4 +1,9 @@
+import sys
+from pathlib import Path
 from uuid import UUID
+
+# Добавляем корневую директорию проекта в sys.path для правильного импорта
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from auth import auth_backend, check_admin, current_active_user, fastapi_users
 from core.database import get_db

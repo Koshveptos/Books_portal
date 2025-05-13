@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 from models.book import Language
@@ -178,3 +178,13 @@ class TagUpdate(TagBase):
 class Tag(TagBase):
     id: int
     model_config = ConfigDict(from_attributes=True)
+
+
+# Схема для результатов поиска
+class BookSearchResponse(BaseModel):
+    total: int
+    items: List[BookResponse]
+    page: int = 1
+    size: int = 10
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    query: Optional[str] = None

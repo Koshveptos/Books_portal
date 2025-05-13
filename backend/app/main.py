@@ -1,12 +1,15 @@
 import time
 from contextlib import asynccontextmanager
 
+# Явный импорт моделей для инициализации
 import uvicorn
 from core.exceptions import BookPortalException
 from core.logger_config import logger
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+
+# Правильные импорты из 'routers' вместо 'routes'
 from routers.auth import router as auth_router
 from routers.authors import router as authors_router
 from routers.books import router as books_router
@@ -27,6 +30,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan, title="Books Portal")
 
+# Настраиваем и включаем все роутеры с правильными тегами
 app.include_router(books_router, prefix="/books", tags=["books"])
 app.include_router(authors_router, prefix="/authors", tags=["authors"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])

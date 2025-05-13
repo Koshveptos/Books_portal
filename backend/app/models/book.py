@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import enum
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, ClassVar, Optional
 
+# Используем общую Base из models.base
+from models.base import Base
 from sqlalchemy import Column, DateTime
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey, Integer, String, Table
+from sqlalchemy import Float, ForeignKey, Integer, String, Table
 from sqlalchemy.dialects.postgresql import TSVECTOR
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-Base = declarative_base()
+# Условный импорт для аннотаций типов, чтобы избежать циклических импортов
+if TYPE_CHECKING:
+    from models.user import User
 
 
 class Language(str, enum.Enum):
@@ -64,6 +68,41 @@ book_authors = Table(
     Column("author_id", Integer, ForeignKey("authors.id", ondelete="CASCADE"), primary_key=True),
 )
 
+# Промежуточная таблица для лайков книг пользователями
+likes = Table(
+    "likes",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id"), primary_key=True),
+    Column("book_id", Integer, ForeignKey("books.id"), primary_key=True),
+)
+
+# Промежуточная таблица для избранных книг пользователей
+favorites = Table(
+    "favorites",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id"), primary_key=True),
+    Column("book_id", Integer, ForeignKey("books.id"), primary_key=True),
+)
+
+
+class Rating(Base):
+    """Модель для оценок книг пользователями"""
+
+    __tablename__ = "ratings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    book_id: Mapped[int] = mapped_column(Integer, ForeignKey("books.id", ondelete="CASCADE"), nullable=False)
+    rating: Mapped[float] = mapped_column(Float, nullable=False)
+    comment: Mapped[Optional[str]] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    # Отношения с полными квалифицированными именами
+    book: Mapped["Book"] = relationship("Book", back_populates="ratings")
+    user: Mapped["User"] = relationship("User", back_populates="ratings", foreign_keys=[user_id])
+
 
 class Book(Base):
     __tablename__ = "books"
@@ -87,16 +126,23 @@ class Book(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC), nullable=False
     )
-    categories: Mapped[list[Category]] = relationship(secondary=books_categories, back_populates="books")
-    tags: Mapped[list[Tag]] = relationship(secondary=books_tags, back_populates="books")
-    authors: Mapped[list[Author]] = relationship(secondary=book_authors, back_populates="books")
+
+    # Отношения
+    categories: Mapped[list["Category"]] = relationship(secondary=books_categories, back_populates="books")
+    tags: Mapped[list["Tag"]] = relationship(secondary=books_tags, back_populates="books")
+    authors: Mapped[list["Author"]] = relationship(secondary=book_authors, back_populates="books")
+    ratings: Mapped[list["Rating"]] = relationship("Rating", back_populates="book")
+
+    # Необходимо для работы с нативными SQL запросами
+    __allow_unmapped__ = True
+    _metadata: ClassVar[dict] = None
 
 
 class Author(Base):
     __tablename__ = "authors"
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
-    books: Mapped[list[Book]] = relationship(secondary=book_authors, back_populates="authors")
+    books: Mapped[list["Book"]] = relationship(secondary=book_authors, back_populates="authors")
     search_vector: Mapped[TSVECTOR | None] = mapped_column(TSVECTOR, nullable=True)
 
 
@@ -105,7 +151,7 @@ class Category(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name_categories: Mapped[str] = mapped_column(String(50), index=True, nullable=False, unique=True)
     description: Mapped[str | None] = mapped_column(String(255))
-    books: Mapped[list[Book]] = relationship(secondary=books_categories, back_populates="categories")
+    books: Mapped[list["Book"]] = relationship(secondary=books_categories, back_populates="categories")
     search_vector: Mapped[TSVECTOR | None] = mapped_column(TSVECTOR, nullable=True)
 
 
@@ -113,5 +159,5 @@ class Tag(Base):
     __tablename__ = "tags"
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name_tag: Mapped[str] = mapped_column(String(50), index=True, nullable=False, unique=True)
-    books: Mapped[list[Book]] = relationship(secondary=books_tags, back_populates="tags")
+    books: Mapped[list["Book"]] = relationship(secondary=books_tags, back_populates="tags")
     search_vector: Mapped[TSVECTOR | None] = mapped_column(TSVECTOR, nullable=True)
