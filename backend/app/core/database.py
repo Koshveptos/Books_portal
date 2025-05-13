@@ -3,11 +3,14 @@
 import logging
 
 from core.config import settings
-from loguru import logger
-from models.base import Base
+from core.logger_config import logger
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+
+# Определяем базовый класс для всех моделей если его нет
+Base = declarative_base()
 
 
 # Настройка логгера SQLAlchemy
@@ -22,11 +25,34 @@ sqlalchemy_logger.setLevel(logging.INFO)
 sqlalchemy_logger.addHandler(SQLAlchemyLogHandler())
 
 
+# Функция для проверки подключения к БД
+async def check_database_connection():
+    logger.info(f"Connecting to database at {settings.DATABASE_URL}...")
+    try:
+        engine = create_async_engine(
+            settings.DATABASE_URL,
+            echo=settings.DB_ECHO_LOG,
+            future=True,
+        )
+        # Проверка подключения
+        async with engine.connect():
+            logger.info("Database connection successful")
+        await engine.dispose()
+        return True
+    except Exception as e:
+        logger.error(f"Database connection failed: {str(e)}")
+        return False
+
+
 # Создание движка базы данных
 async def create_db_engine():
     logger.info(f"Connecting to database at {settings.DATABASE_URL}...")
     try:
-        engine = create_async_engine(settings.DATABASE_URL, echo=True)
+        engine = create_async_engine(
+            settings.DATABASE_URL,
+            echo=settings.DB_ECHO_LOG,
+            future=True,
+        )
         # Проверка подключения
         async with engine.connect():
             logger.success("Database connection established successfully.")
@@ -64,5 +90,17 @@ async def get_db():
 
 
 # Создание движка и сессии
-engine = create_async_engine(settings.DATABASE_URL, echo=True)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=settings.DB_ECHO_LOG,
+    future=True,
+)
+
+# Создаем асинхронную сессию
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
+)

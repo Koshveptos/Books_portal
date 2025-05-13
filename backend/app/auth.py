@@ -1,10 +1,21 @@
+import sys
+from pathlib import Path
+
+# Добавляем корневую директорию проекта в sys.path для правильного импорта
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Импорты из core
 from core.database import get_db
 from core.exceptions import PermissionDeniedException
 from core.logger_config import logger
+
+# Импорты из FastAPI
 from fastapi import Depends, HTTPException, status
 from fastapi_users import BaseUserManager, FastAPIUsers
 from fastapi_users.authentication import AuthenticationBackend, BearerTransport, JWTStrategy
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
+
+# Импортируем User напрямую из файла для избежания циклической зависимости
 from models.user import User
 from sqlalchemy.ext.asyncio import AsyncSession
 

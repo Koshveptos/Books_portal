@@ -30,6 +30,30 @@ class AuthenticationException(BookPortalException):
     message = "Ошибка аутентификации"
 
 
+class CredentialsException(BookPortalException):
+    """Недействительные учетные данные"""
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+    error_code = "invalid_credentials"
+    message = "Недействительные учетные данные"
+
+
+class TokenExpiredException(BookPortalException):
+    """Срок действия токена истек"""
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+    error_code = "token_expired"
+    message = "Срок действия токена истек"
+
+
+class UserDeactivatedException(BookPortalException):
+    """Пользователь деактивирован"""
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+    error_code = "user_deactivated"
+    message = "Пользователь деактивирован"
+
+
 class PermissionDeniedException(BookPortalException):
     """Ошибка прав доступа"""
 

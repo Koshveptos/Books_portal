@@ -1,7 +1,12 @@
+import os
+
+# Добавляем путь к приложению в sys.path для абсолютных импортов
+import sys
 import time
 from contextlib import asynccontextmanager
 
-# Явный импорт моделей для инициализации
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import uvicorn
 
 # Исправлен импорт - в директории core файл конфигурации называется config, а не settings
@@ -37,6 +42,9 @@ app = FastAPI(
     lifespan=lifespan,
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
+    description="API для управления книжным порталом с рекомендациями",
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 # Настраиваем CORS middleware для возможности запросов с фронтенда

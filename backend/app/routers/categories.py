@@ -1,12 +1,15 @@
 from typing import List
 
-from auth import admin_or_moderator
+from auth import admin_or_moderator, check_admin
 from core.database import get_db
-from core.exceptions import CategoryNotFoundException, InvalidCategoryDataException
+from core.exceptions import CategoryNotFoundException
 from core.logger_config import logger
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from models.book import Category as CategoryModel
+from models.user import User
 from schemas.book import Category, CategoryCreate, CategoryUpdate
 from services.book_servise import CategoryRepository
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["categories"])
@@ -15,17 +18,35 @@ router = APIRouter(tags=["categories"])
 @router.post(
     "/", response_model=Category, status_code=status.HTTP_201_CREATED, dependencies=[Depends(admin_or_moderator)]
 )
-async def create_category(category_data: CategoryCreate, session: AsyncSession = Depends(get_db)):
+async def create_category(
+    category_data: CategoryCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(check_admin)
+):
     """Создание новой категории (доступно только для админов и модераторов)"""
     logger.info(f"Creating new category: {category_data.name_categories}")
     try:
-        category_repo = CategoryRepository(session)
+        # Проверяем существование категории с таким именем
+        stmt = select(CategoryModel).where(CategoryModel.name_categories == category_data.name_categories)
+        result = await db.execute(stmt)
+        existing_category = result.scalars().first()
+
+        if existing_category:
+            logger.warning(f"Attempt to create duplicate category: {category_data.name_categories}")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Категория с именем '{category_data.name_categories}' уже существует",
+            )
+
+        category_repo = CategoryRepository(db)
         category = await category_repo.create(category_data)
         logger.info(f"Category created successfully: {category.name_categories} (id: {category.id})")
         return category
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
+        await db.rollback()
         logger.error(f"Error creating category: {str(e)}")
-        raise InvalidCategoryDataException(message=f"Ошибка при создании категории: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @router.get("/", response_model=List[Category])

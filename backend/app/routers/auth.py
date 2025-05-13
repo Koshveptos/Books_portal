@@ -1,16 +1,16 @@
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter
-from schemas.user import LogoutResponse, TokenResponse, UserRead
-
-from .user import logout, protected_route, refresh_token, register
-
 # Добавляем корневую директорию проекта в sys.path для правильного импорта
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Теперь импортируем из глобальной области видимости
 from auth import auth_backend, fastapi_users
+from fastapi import APIRouter
+from schemas.user import LogoutResponse, TokenResponse, UserRead
+
+# Импортируем пользовательские функции после импорта auth
+from .user import logout, protected_route, refresh_token, register
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 # Встроенные маршруты fastapi-users

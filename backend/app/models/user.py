@@ -1,13 +1,14 @@
 from typing import TYPE_CHECKING, List
 
 from fastapi_users.db import SQLAlchemyBaseUserTable
-from models.base import Base
 from sqlalchemy import Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from .base import Base
+
 # Условный импорт для аннотаций типов, чтобы избежать циклических импортов
 if TYPE_CHECKING:
-    from models.book import Rating
+    from .book import Rating
 
 
 class User(Base, SQLAlchemyBaseUserTable[int]):

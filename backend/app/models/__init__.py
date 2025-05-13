@@ -3,12 +3,15 @@ Models module for Books Portal API
 """
 
 import logging
+import sys
+from pathlib import Path
 
-# Импортируем сначала базовую модель
-from models.base import Base
+# Добавляем корневую директорию проекта в sys.path для правильного импорта
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Импортируем модели, связанные с книгами
-from models.book import (
+# Импортируем базовую модель и все классы
+from .base import Base
+from .book import (
     Author,
     Book,
     Category,
@@ -21,9 +24,7 @@ from models.book import (
     favorites,
     likes,
 )
-
-# Затем импортируем пользовательскую модель, которая зависит от Rating
-from models.user import User
+from .user import User
 
 # Логгер для отслеживания загрузки моделей
 logger = logging.getLogger(__name__)

@@ -1,29 +1,51 @@
 from typing import List
 
-from auth import admin_or_moderator
+from auth import admin_or_moderator, check_admin
 from core.database import get_db
-from core.exceptions import InvalidTagDataException, TagNotFoundException
+from core.exceptions import TagNotFoundException
 from core.logger_config import logger
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from models.book import Tag as TagModel
+from models.user import User
 from schemas.book import Tag, TagCreate, TagUpdate
 from services.book_servise import TagRepository
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["tags"])
 
 
 @router.post("/", response_model=Tag, status_code=status.HTTP_201_CREATED, dependencies=[Depends(admin_or_moderator)])
-async def create_tag(tag_data: TagCreate, session: AsyncSession = Depends(get_db)):
+async def create_tag(
+    tag_data: TagCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(check_admin),  # Только модераторы могут создавать теги
+):
     """Создание нового тега (доступно только для админов и модераторов)"""
     logger.info(f"Creating new tag: {tag_data.name_tag}")
     try:
-        tag_repo = TagRepository(session)
+        # Проверяем существование тега с таким именем
+        stmt = select(TagModel).where(TagModel.name_tag == tag_data.name_tag)
+        result = await db.execute(stmt)
+        existing_tag = result.scalars().first()
+
+        if existing_tag:
+            logger.warning(f"Attempt to create duplicate tag: {tag_data.name_tag}")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=f"Тег с именем '{tag_data.name_tag}' уже существует"
+            )
+
+        tag_repo = TagRepository(db)
         tag = await tag_repo.create(tag_data)
         logger.info(f"Tag created successfully: {tag.name_tag} (id: {tag.id})")
         return tag
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
+        await db.rollback()
         logger.error(f"Error creating tag: {str(e)}")
-        raise InvalidTagDataException(message=f"Ошибка при создании тега: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @router.get("/", response_model=List[Tag])

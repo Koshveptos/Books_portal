@@ -1,13 +1,16 @@
 import traceback
 from typing import List
 
-from auth import admin_or_moderator
+from auth import admin_or_moderator, check_admin
 from core.database import get_db
 from core.exceptions import AuthorNotFoundException, InvalidAuthorDataException
 from core.logger_config import logger
 from fastapi import APIRouter, Depends, HTTPException, status
+from models.book import Author as AuthorModel
+from models.user import User
 from schemas.book import Author, AuthorCreate, AuthorUpdate
 from services.book_servise import AuthorRepository
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["authors"])
@@ -16,10 +19,23 @@ router = APIRouter(tags=["authors"])
 @router.post(
     "/", response_model=Author, status_code=status.HTTP_201_CREATED, dependencies=[Depends(admin_or_moderator)]
 )
-async def create_author(author_data: AuthorCreate, session: AsyncSession = Depends(get_db)):
+async def create_author(
+    author_data: AuthorCreate, session: AsyncSession = Depends(get_db), current_user: User = Depends(check_admin)
+):
     """Создание нового автора (доступно только для админов и модераторов)"""
     logger.info(f"Creating new author: {author_data.name}")
     try:
+        # Проверяем, существует ли автор с таким именем
+        stmt = select(AuthorModel).where(AuthorModel.name == author_data.name)
+        result = await session.execute(stmt)
+        existing_author = result.scalars().first()
+
+        if existing_author:
+            logger.warning(f"Attempt to create duplicate author: {author_data.name}")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=f"Автор с именем '{author_data.name}' уже существует"
+            )
+
         logger.debug(f"Creating AuthorRepository instance with session: {session}")
         author_repo = AuthorRepository(session)
         logger.debug(f"Calling author_repo.create with data: {author_data.dict()}")

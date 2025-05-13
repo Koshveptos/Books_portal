@@ -4,17 +4,18 @@ import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar, Optional
 
-# Используем общую Base из models.base
-from models.base import Base
 from sqlalchemy import Column, DateTime
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import Float, ForeignKey, Integer, String, Table
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+# Используем общую Base из models.base
+from .base import Base
+
 # Условный импорт для аннотаций типов, чтобы избежать циклических импортов
 if TYPE_CHECKING:
-    from models.user import User
+    from .user import User
 
 
 class Language(str, enum.Enum):
@@ -141,7 +142,7 @@ class Book(Base):
 class Author(Base):
     __tablename__ = "authors"
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(50), index=True, nullable=False, unique=True)
     books: Mapped[list["Book"]] = relationship(secondary=book_authors, back_populates="authors")
     search_vector: Mapped[TSVECTOR | None] = mapped_column(TSVECTOR, nullable=True)
 

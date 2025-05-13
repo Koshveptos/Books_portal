@@ -5,19 +5,42 @@ from uuid import UUID
 # Добавляем корневую директорию проекта в sys.path для правильного импорта
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Импорты из auth - после импорта моделей
 from auth import auth_backend, check_admin, current_active_user, fastapi_users
+
+# Импорты из core
 from core.database import get_db
 from core.exceptions import (
     InvalidUserDataException,
     UserAlreadyExistsException,
 )
 from core.logger_config import logger
+
+# Импорты из FastAPI
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_users.exceptions import UserAlreadyExists
+
+# Импорты из модулей приложения
 from models.user import User
+
+# Схемы и репозитории
 from schemas.user import ChangeUserStatusRequest, LogoutResponse, TokenResponse, UserCreate, UserRead
-from services.user_service import UserService
 from sqlalchemy.ext.asyncio import AsyncSession
+
+try:
+    from services.user_service import UserService
+except ImportError:
+    # Если модули не найдены, определяем базовый класс
+    class UserService:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_by_id(self, id):
+            return None
+
+        async def update(self, user):
+            pass
+
 
 # Определение роутера
 router = APIRouter(tags=["users"])

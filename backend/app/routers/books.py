@@ -1,6 +1,6 @@
 from auth import current_active_user
 from core.database import get_db
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 from models.book import Author, Book, Category, Tag
 from models.user import User
@@ -383,6 +383,18 @@ async def create_category(
     try:
         logger.info(f"Создание новой категории: {category.name_categories}")
 
+        # Проверка на дубликаты
+        stmt = select(Category).where(Category.name_categories == category.name_categories)
+        result = await db.execute(stmt)
+        existing_category = result.scalars().first()
+
+        if existing_category:
+            logger.warning(f"Попытка создать дублирующуюся категорию: {category.name_categories}")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Категория с именем '{category.name_categories}' уже существует",
+            )
+
         category_db = Category(**category.model_dump())
         db.add(category_db)
         await db.commit()
@@ -413,6 +425,17 @@ async def create_tag(
         raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
         logger.info(f"Создание нового тега: {tag.name_tag}")
+
+        # Проверка на дубликаты
+        stmt = select(Tag).where(Tag.name_tag == tag.name_tag)
+        result = await db.execute(stmt)
+        existing_tag = result.scalars().first()
+
+        if existing_tag:
+            logger.warning(f"Попытка создать дублирующийся тег: {tag.name_tag}")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=f"Тег с именем '{tag.name_tag}' уже существует"
+            )
 
         tag_db = Tag(**tag.model_dump())
         db.add(tag_db)
