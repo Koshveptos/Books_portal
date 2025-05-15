@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 # Правильные импорты из 'routers' вместо 'routes'
 from routers.auth import router as auth_router
 from routers.authors import router as authors_router
+from routers.books import books_router as flat_books_router  # Импортируем плоский роутер для книг
 from routers.books import router as books_router
 from routers.categories import router as categories_router
 from routers.favorites import router as favorites_router
@@ -30,6 +31,8 @@ from routers.recommendations import router as recommendations_router
 from routers.search import router as search_router
 from routers.tags import router as tags_router
 from routers.user import router as users_router
+
+# from starlette.requests import Request
 
 # потом все подключения роутеров в один файл перекинуть и там настроить все
 
@@ -57,10 +60,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Настраиваем и включаем все роутеры с правильными тегами
 app.include_router(books_router, prefix="/books", tags=["books"])
+app.include_router(flat_books_router, prefix="/books", tags=["flat_books"])  # Добавляем плоский роутер
 app.include_router(authors_router, prefix="/authors", tags=["authors"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])
 app.include_router(tags_router, prefix="/tags", tags=["tags"])
@@ -154,4 +159,4 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="debug")
+    uvicorn.run(app, host="localhost", port=8000, log_level="debug")

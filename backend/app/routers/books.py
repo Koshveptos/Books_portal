@@ -22,16 +22,18 @@ from sqlalchemy.orm import selectinload
 
 router = APIRouter()
 
+# Альтернативный роутер для доступа через "плоский" путь /books
+books_router = APIRouter()
+
 # Маршруты поиска и обновления векторов перенесены в routers/search.py
 
 
 @router.get("/", response_model=list[BookResponse])
 async def get_books(
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(current_active_user),
 ):
     """
-    Получить список всех книг.
+    Получить список всех книг. Публичный эндпоинт.
     """
     try:
         logger.info("Get all books")
@@ -71,10 +73,9 @@ async def get_books(
 async def get_book(
     book_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(current_active_user),
 ):
     """
-    Получить книгу по её ID.
+    Получить книгу по её ID. Публичный эндпоинт.
     """
     try:
         logger.info("Get book by id")
@@ -96,6 +97,23 @@ async def get_book(
         await db.rollback()
         logger.error(f"Unexpected error while getting book: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
+# Добавляем те же роуты к books_router для доступа через прямой URL
+@books_router.get("/", response_model=list[BookResponse])
+async def get_books_flat(db: AsyncSession = Depends(get_db)):
+    """
+    Получить список всех книг через прямой URL /books. Публичный эндпоинт.
+    """
+    return await get_books(db)
+
+
+@books_router.get("/{book_id}", response_model=BookResponse)
+async def get_book_flat(book_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Получить книгу по её ID через прямой URL /books/{book_id}. Публичный эндпоинт.
+    """
+    return await get_book(book_id, db)
 
 
 @router.post("/", response_model=BookResponse)
@@ -452,3 +470,25 @@ async def create_tag(
         await db.rollback()
         logger.error(f"Непредвиденная ошибка при создании тега: {str(e)}")
         raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
+
+
+# Для URL /books/ (без /books/books/)
+@router.get("/books/", response_model=list[BookResponse])
+async def get_all_books(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Получить список всех книг. Публичный эндпоинт с другим URL.
+    """
+    return await get_books(db)
+
+
+# Для URL /books/books/
+@router.get("/books/", response_model=list[BookResponse])
+async def get_all_books_alt(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Получить список всех книг. Публичный эндпоинт с другим URL.
+    """
+    return await get_books(db)
