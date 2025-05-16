@@ -1,8 +1,9 @@
 from typing import List, Optional
 
 from core.dependencies import get_current_active_user, get_db, get_redis_client
+from core.logger_config import logger
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import Response
 from models.user import User
 from redis import Redis
 from schemas.recommendations import BookRecommendation, RecommendationStats, RecommendationType, SimilarUser
@@ -27,19 +28,6 @@ async def get_recommendations(
 ):
     """
     Получить персональные рекомендации книг.
-
-    Этот эндпоинт возвращает список книг, которые могут понравиться пользователю,
-    основываясь на его предыдущих оценках, лайках и предпочтениях.
-
-    В зависимости от выбранного типа рекомендаций, система будет использовать
-    различные алгоритмы для подбора книг:
-    - hybrid: комбинирует все стратегии
-    - collaborative: на основе оценок похожих пользователей
-    - content: на основе интересов пользователя (авторы, категории, теги)
-    - popularity: популярные книги с высоким рейтингом
-    - author: книги от любимых авторов
-    - category: книги в любимых категориях
-    - tag: книги с любимыми тегами
     """
     try:
         recommendation_service = RecommendationService(db, redis_client)
@@ -55,15 +43,17 @@ async def get_recommendations(
         )
 
         if not recommendations:
-            return JSONResponse(
-                status_code=status.HTTP_204_NO_CONTENT,
-                content={"message": "Рекомендации не найдены. Попробуйте изменить параметры запроса."},
-            )
+            logger.info(f"No recommendations found for user {current_user.id}")
+            return Response(status_code=status.HTTP_204_NO_CONTENT)  # Пустой ответ
 
+        logger.debug(f"Returning {len(recommendations)} recommendations for user {current_user.id}")
         return recommendations
+
     except Exception as e:
+        logger.error(f"Error fetching recommendations for user {current_user.id}: {str(e)}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ошибка при получении рекомендаций: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ошибка при получении рекомендаций",
         )
 
 
@@ -75,19 +65,18 @@ async def get_recommendation_stats(
 ):
     """
     Получить статистику для персональных рекомендаций.
-
-    Возвращает информацию о предпочтениях пользователя, количестве оцененных книг,
-    любимых авторах, категориях и тегах, а также готовности системы
-    предоставлять различные типы рекомендаций для этого пользователя.
     """
     try:
         recommendation_service = RecommendationService(db, redis_client)
         stats = await recommendation_service.get_recommendation_stats(user_id=current_user.id)
+        logger.debug(f"Returning recommendation stats for user {current_user.id}")
         return stats
+
     except Exception as e:
+        logger.error(f"Error fetching recommendation stats for user {current_user.id}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ошибка при получении статистики рекомендаций: {str(e)}",
+            detail="Ошибка при получении статистики рекомендаций",
         )
 
 
@@ -103,10 +92,6 @@ async def get_similar_users(
 ):
     """
     Получить список пользователей с похожими предпочтениями.
-
-    Этот эндпоинт находит пользователей с похожими вкусами на основе
-    оценок книг. Используется для коллаборативной фильтрации и
-    помогает пользователям найти единомышленников.
     """
     try:
         recommendation_service = RecommendationService(db, redis_client)
@@ -115,16 +100,17 @@ async def get_similar_users(
         )
 
         if not similar_users:
-            return JSONResponse(
-                status_code=status.HTTP_204_NO_CONTENT,
-                content={"message": "Похожие пользователи не найдены. Возможно, у вас пока недостаточно оценок."},
-            )
+            logger.info(f"No similar users found for user {current_user.id}")
+            return Response(status_code=status.HTTP_204_NO_CONTENT)  # Пустой ответ
 
+        logger.debug(f"Returning {len(similar_users)} similar users for user {current_user.id}")
         return similar_users
+
     except Exception as e:
+        logger.error(f"Error fetching similar users for user {current_user.id}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ошибка при поиске похожих пользователей: {str(e)}",
+            detail="Ошибка при поиске похожих пользователей",
         )
 
 
@@ -141,9 +127,6 @@ async def get_author_recommendations(
 ):
     """
     Получить рекомендации книг от любимых авторов.
-
-    Этот эндпоинт анализирует оценки пользователя, определяет
-    любимых авторов и рекомендует непрочитанные книги этих авторов.
     """
     try:
         recommendation_service = RecommendationService(db, redis_client)
@@ -159,18 +142,17 @@ async def get_author_recommendations(
         )
 
         if not recommendations:
-            return JSONResponse(
-                status_code=status.HTTP_204_NO_CONTENT,
-                content={
-                    "message": "Рекомендации по авторам не найдены. Возможно, у вас нет любимых авторов или вы уже прочитали все их книги."
-                },
-            )
+            logger.info(f"No author recommendations found for user {current_user.id}")
+            return Response(status_code=status.HTTP_204_NO_CONTENT)  # Пустой ответ
 
+        logger.debug(f"Returning {len(recommendations)} author recommendations for user {current_user.id}")
         return recommendations
+
     except Exception as e:
+        logger.error(f"Error fetching author recommendations for user {current_user.id}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ошибка при получении рекомендаций по авторам: {str(e)}",
+            detail="Ошибка при получении рекомендаций по авторам",
         )
 
 
@@ -187,9 +169,6 @@ async def get_category_recommendations(
 ):
     """
     Получить рекомендации книг из любимых категорий.
-
-    Этот эндпоинт анализирует оценки пользователя, определяет
-    любимые категории и рекомендует непрочитанные книги из этих категорий.
     """
     try:
         recommendation_service = RecommendationService(db, redis_client)
@@ -205,16 +184,17 @@ async def get_category_recommendations(
         )
 
         if not recommendations:
-            return JSONResponse(
-                status_code=status.HTTP_204_NO_CONTENT,
-                content={"message": "Рекомендации по категориям не найдены. Возможно, у вас нет любимых категорий."},
-            )
+            logger.info(f"No category recommendations found for user {current_user.id}")
+            return Response(status_code=status.HTTP_204_NO_CONTENT)  # Пустой ответ
 
+        logger.debug(f"Returning {len(recommendations)} category recommendations for user {current_user.id}")
         return recommendations
+
     except Exception as e:
+        logger.error(f"Error fetching category recommendations for user {current_user.id}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ошибка при получении рекомендаций по категориям: {str(e)}",
+            detail="Ошибка при получении рекомендаций по категориям",
         )
 
 
@@ -231,9 +211,6 @@ async def get_tag_recommendations(
 ):
     """
     Получить рекомендации книг с любимыми тегами.
-
-    Этот эндпоинт анализирует оценки пользователя, определяет
-    любимые теги и рекомендует непрочитанные книги с этими тегами.
     """
     try:
         recommendation_service = RecommendationService(db, redis_client)
@@ -249,14 +226,15 @@ async def get_tag_recommendations(
         )
 
         if not recommendations:
-            return JSONResponse(
-                status_code=status.HTTP_204_NO_CONTENT,
-                content={"message": "Рекомендации по тегам не найдены. Возможно, у вас нет любимых тегов."},
-            )
+            logger.info(f"No tag recommendations found for user {current_user.id}")
+            return Response(status_code=status.HTTP_204_NO_CONTENT)  # Пустой ответ
 
+        logger.debug(f"Returning {len(recommendations)} tag recommendations for user {current_user.id}")
         return recommendations
+
     except Exception as e:
+        logger.error(f"Error fetching tag recommendations for user {current_user.id}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ошибка при получении рекомендаций по тегам: {str(e)}",
+            detail="Ошибка при получении рекомендаций по тегам",
         )

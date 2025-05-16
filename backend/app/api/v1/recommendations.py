@@ -46,7 +46,15 @@ async def get_recommendations(
         if not recommendations:
             return Response(status_code=204)
 
-        return JSONResponse(content=jsonable_encoder(recommendations), media_type="application/json; charset=utf-8")
+        # Преобразуем рекомендации в JSON-совместимый формат
+        json_recommendations = jsonable_encoder(recommendations)
+
+        # Создаем ответ с явным указанием кодировки
+        return JSONResponse(
+            content=json_recommendations,
+            media_type="application/json; charset=utf-8",
+            headers={"Content-Type": "application/json; charset=utf-8"},
+        )
 
     except Exception as e:
         logger.error(f"Ошибка при получении рекомендаций: {str(e)}", exc_info=True)
@@ -55,4 +63,5 @@ async def get_recommendations(
             status_code=500,
             content={"message": "Ошибка сервера при получении рекомендаций"},
             media_type="application/json; charset=utf-8",
+            headers={"Content-Type": "application/json; charset=utf-8"},
         )
