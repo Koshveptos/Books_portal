@@ -1,0 +1,33 @@
+@startuml
+title Диаграмма состояний пользовательской сессии
+
+state "Не авторизован" as Unauthorized
+state "Аутентификация" as Auth
+state "Авторизован" as Authorized
+state "Поиск книг" as Search
+state "Просмотр книги" as ViewBook
+state "Управление каталогом" as ManageBooks <<AdminOnly>>
+
+[*] --> Unauthorized
+
+Unauthorized --> Auth : Ввод логина/парода
+Auth --> Authorized : Успешная аутентификация\n(200 OK с токеном)
+Auth --> Unauthorized : Ошибка входа\n(401 Unauthorized)
+
+Authorized --> Search : Запрос поиска
+Search --> Search : Уточнение параметров\n(новый запрос)
+Search --> ViewBook : Выбор книги из списка
+ViewBook --> Search : Возврат к результатам
+ViewBook --> Authorized : Закрытие деталей
+
+Authorized --> ManageBooks : Админ-панель\n(только для админов)
+ManageBooks --> Authorized : Возврат в ЛК
+
+Authorized --> Unauthorized : Выход из системы\n(инвалидация токена)
+
+note right of Authorized
+  Состояния для авторизованных
+  пользователей доступны только
+  при валидном JWT токене
+end note
+@enduml

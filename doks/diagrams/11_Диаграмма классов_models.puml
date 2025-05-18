@@ -1,0 +1,56 @@
+@startuml
+title Диаграмма классов Pydantic схем
+
+class BookBase {
+  +title: str
+  +author: str
+  +year: str?
+  +publisher: str?
+  +isbn: str
+  +description: str?
+  +cover: str?
+  +language: str?
+  +file_url: str
+}
+
+class BookCreate {
+  +categories: List[int]
+  +tags: List[int]
+}
+
+class BookResponse {
+  +id: int
+  +created_at: datetime
+  +updated_at: datetime
+  +categories: List[CategoryResponse]
+  +tags: List[TagResponse]
+}
+
+class CategoryBase {
+  +name_categories: str
+  +description: str?
+}
+
+class TagBase {
+  +name_tag: str
+}
+
+class UserRead {
+  +id: int
+  +email: str
+  +is_active: bool
+  +is_superuser: bool
+  +is_verified: bool
+}
+
+BookBase <|-- BookCreate
+BookBase <|-- BookResponse
+BookCreate <|-- BookUpdate
+BookCreate <|-- BookPartial
+
+CategoryBase <|-- CategoryCreate
+CategoryBase <|-- CategoryResponse
+
+TagBase <|-- TagCreate
+TagBase <|-- TagResponse
+@enduml

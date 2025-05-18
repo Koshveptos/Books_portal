@@ -1,0 +1,38 @@
+@startuml
+left to right direction
+
+rectangle "Управление пользователями" as users {
+  rectangle "Регистрация пользователей" as register
+  rectangle "Аутентификация" as auth
+  rectangle "Авторизация ролей" as roles
+}
+
+rectangle "Управление каталогом книг" as books {
+  rectangle "Добавление новой книги" as add_book
+  rectangle "Поиск книг по названию/автору" as search_book
+  rectangle "Редактирование книги" as edit_book
+  rectangle "Удаление книги" as delete_book
+}
+
+rectangle "Дополнительные процессы" as extra {
+  rectangle "Оценка книг" as rating
+  rectangle "Добавление отзывов" as reviews
+  rectangle "Избранные книги" as favorites
+  rectangle "История просмотров" as history
+}
+
+users --> books
+books --> extra
+
+register --> auth
+auth --> roles
+
+add_book --> search_book
+search_book --> edit_book
+edit_book --> delete_book
+
+rating --> reviews
+reviews --> favorites
+favorites --> history
+
+@enduml

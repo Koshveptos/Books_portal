@@ -1,0 +1,48 @@
+@startuml
+title Диаграмма классов моделей данных
+
+class Book {
+  +id: int <<pk>>
+  +title: str
+  +author: str
+  +year: str?
+  +publisher: str?
+  +isbn: str
+  +description: str?
+  +cover: str?
+  +language: str?
+  +file_url: str
+  +search_vector: TSVECTOR?
+  +created_at: datetime
+  +updated_at: datetime
+  +categories: List[Category]
+  +tags: List[Tag]
+}
+
+class Category {
+  +id: int <<pk>>
+  +name_categories: str
+  +description: str?
+  +search_vector: TSVECTOR?
+  +books: List[Book]
+}
+
+class Tag {
+  +id: int <<pk>>
+  +name_tag: str
+  +search_vector: TSVECTOR?
+  +books: List[Book]
+}
+
+class User {
+  +id: int <<pk>>
+  +email: str
+  +hashed_password: str
+  +is_active: bool
+  +is_superuser: bool
+  +is_verified: bool
+}
+
+Book "many" -- "many" Category : через books_categories
+Book "many" -- "many" Tag : через books_tags
+@enduml

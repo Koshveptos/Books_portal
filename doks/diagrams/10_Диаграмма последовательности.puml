@@ -1,0 +1,40 @@
+@startuml
+title Диаграмма последовательности: Книжный портал (FastAPI + PostgreSQL)
+
+actor Пользователь
+participant "Клиентская часть" as Frontend
+participant "FastAPI\n(сервер)" as Backend #lightgreen
+participant "PostgreSQL\n(база данных)" as Database #lightblue
+
+autonumber
+
+Пользователь -> Frontend: Ввод учетных данных
+Frontend -> Backend: POST /auth/login\n{username, password}
+Backend -> Database: SELECT * FROM users\nWHERE email = :email
+Database --> Backend: Данные пользователя
+Backend -> Backend: Проверка пароля (bcrypt)
+Backend -> Backend: Генерация access_token
+
+alt Успешная аутентификация
+    Backend --> Frontend: 200 OK\n{access_token, token_type}
+    Frontend --> Пользователь: Перенаправление в ЛК
+else Ошибка
+    Backend --> Frontend: 401 Unauthorized\n{detail: "Invalid credentials"}
+    Frontend --> Пользователь: Ошибка входа
+end
+
+Пользователь -> Frontend: Поиск книги "Python"
+Frontend -> Backend: GET /books?title=Python\nAuthorization: Bearer {token}
+Backend -> Backend: Валидация JWT
+Backend -> Database: SELECT * FROM books\nWHERE title ILIKE '%Python%'
+Database --> Backend: Список книг (JSON)
+Backend --> Frontend: 200 OK\n[{id, title, author...}]
+Frontend --> Пользователь: Отображение 5 книг
+
+Пользователь -> Frontend: Выбор книги ID:123
+Frontend -> Backend: GET /books/123
+Backend -> Database: SELECT * FROM books\nWHERE id = 123
+Database --> Backend: Данные книги
+Backend --> Frontend: 200 OK\n{full_book_details}
+Frontend --> Пользователь: Страница книги
+@enduml

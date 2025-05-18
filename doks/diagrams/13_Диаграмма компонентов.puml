@@ -1,0 +1,42 @@
+@startuml
+title Диаграмма компонентов книжного портала
+
+package "Клиент" {
+  [Web-интерфейс] as ui
+}
+
+package "Сервер FastAPI" {
+  [API] as api
+  [Аутентификация] as auth
+  [Управление книгами] as book
+  [Поиск] as search
+}
+
+package "Базы данных" {
+  [PostgreSQL] as db
+  [Кэш] as cache
+}
+
+node "Внешние сервисы" {
+  [CDN] as cdn
+  [Email] as email
+}
+
+ui --> api : HTTP(S)
+api --> auth
+api --> book
+api --> search
+
+auth --> db : users
+book --> db : books
+search --> db : full-text
+search --> cache
+
+auth --> email
+ui --> cdn
+
+note right of api
+  FastAPI приложение
+  JWT аутентификация
+end note
+@enduml

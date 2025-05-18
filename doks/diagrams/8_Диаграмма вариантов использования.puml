@@ -1,0 +1,47 @@
+@startuml
+left to right direction
+skinparam usecase {
+  BackgroundColor LightGray
+  BorderColor DarkSlateGray
+  ArrowColor Navy
+}
+
+actor Пользователь as User #lightblue
+actor Администратор as Admin #pink
+
+rectangle "Книжный портал" {
+  (Вход в систему) as login
+  (Регистрация) as register
+  (Поиск книг) as search
+  (Просмотр деталей книги) as details
+
+  (Управление книгами) as manage_books <<extend>>
+  (Добавление книги) as add_book
+  (Редактирование книги) as edit_book
+  (Удаление книги) as delete_book
+
+  (Администрирование) as admin <<extend>>
+  (Просмотр логов активности) as view_logs
+}
+
+User --> login
+User --> register
+User --> search
+User --> details
+
+Admin --> manage_books
+manage_books .> add_book : extends
+manage_books .> edit_book : extends
+manage_books .> delete_book : extends
+
+Admin --> admin
+admin .> view_logs : extends
+
+note right of manage_books
+  Требуются права администратора
+end note
+
+note right of User
+  Все зарегистрированные пользователи
+end note
+@enduml

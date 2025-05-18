@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-from uuid import UUID
 
 # Добавляем корневую директорию проекта в sys.path для правильного импорта
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -24,7 +23,13 @@ from fastapi_users.exceptions import UserAlreadyExists
 from models.user import User
 
 # Схемы и репозитории
-from schemas.user import ChangeUserStatusRequest, LogoutResponse, TokenResponse, UserCreate, UserRead
+from schemas.user import (
+    ChangeUserStatusRequest,
+    LogoutResponse,
+    TokenResponse,
+    UserCreate,
+    UserRead,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 try:
@@ -73,7 +78,10 @@ async def logout(user: User = Depends(current_active_user)) -> LogoutResponse:
         return LogoutResponse(detail="Successfully logged out")
     except Exception as e:
         logger.error(f"Error during logout for user {user.email}: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error during logout process")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error during logout process",
+        )
 
 
 async def protected_route(user: User = Depends(current_active_user)) -> dict:
@@ -94,40 +102,72 @@ async def register(
     try:
         logger.info(f"Registering new user: {user_create.email}")
         created_user = await user_manager.create(user_create)
-        logger.info(f"User registered successfully: {created_user.email} (id: {created_user.id})")
+        logger.info(
+            f"User registered successfully: {created_user.email} (id: {created_user.id})"
+        )
         return UserRead.model_validate(created_user)
     except UserAlreadyExists:
-        logger.warning(f"Registration failed: User with email {user_create.email} already exists")
+        logger.warning(
+            f"Registration failed: User with email {user_create.email} already exists"
+        )
         raise UserAlreadyExistsException()
     except ValueError as e:
         logger.warning(f"Registration failed for {user_create.email}: {str(e)}")
         raise InvalidUserDataException(message=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error during registration for {user_create.email}: {str(e)}")
+        logger.error(
+            f"Unexpected error during registration for {user_create.email}: {str(e)}"
+        )
         raise InvalidUserDataException(message=f"Ошибка при регистрации: {str(e)}")
 
 
 @router.patch("/{id}/status", response_model=UserRead)
 async def change_user_status(
-    id: UUID,
+    id: int,
     change_status_req: ChangeUserStatusRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(check_admin),
 ) -> UserRead:
+    """
+    Изменяет роль пользователя (требуются права администратора).
+
+    Args:
+        id (int): ID пользователя, чью роль нужно изменить
+        change_status_req (ChangeUserStatusRequest): Запрос на изменение роли
+        db (AsyncSession): Сессия базы данных
+        current_user (User): Текущий пользователь (должен быть администратором)
+
+    Returns:
+        UserRead: Обновленная информация о пользователе
+
+    Raises:
+        HTTPException: 404 если пользователь не найден
+        HTTPException: 400 если администратор пытается понизить свои права
+        HTTPException: 403 если у текущего пользователя нет прав администратора
+        HTTPException: 500 при внутренней ошибке сервера
+    """
     try:
         # Проверка наличия пользователя
         user_service = UserService(db)
         user = await user_service.get_by_id(id)
         if not user:
-            logger.warning(f"Attempted to change status for non-existent user with id: {id}")
+            logger.warning(
+                f"Attempted to change status for non-existent user with id: {id}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
             )
 
         # Запрет на понижение прав самому себе
-        if id == current_user.id and current_user.is_superuser and change_status_req.is_superuser is False:
-            logger.warning(f"Admin user {current_user.id} attempted to demote themselves")
+        if (
+            id == current_user.id
+            and current_user.is_superuser
+            and change_status_req.is_superuser is False
+        ):
+            logger.warning(
+                f"Admin user {current_user.id} attempted to demote themselves"
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Admin cannot demote themselves",

@@ -1,0 +1,22 @@
+@startuml
+title Диаграмма развертывания
+
+node "Клиент" {
+  [Браузер]
+}
+
+node "Веб-сервер" {
+  [NGINX]
+  [unicorn]
+  [FastAPI]
+}
+
+node "База данных" {
+  [PostgreSQL]
+}
+
+[Браузер] --> [NGINX] : HTTPS
+[NGINX] --> [unicorn] : HTTP
+[unicorn] --> [FastAPI]
+[FastAPI] --> [PostgreSQL] : SQL
+@enduml

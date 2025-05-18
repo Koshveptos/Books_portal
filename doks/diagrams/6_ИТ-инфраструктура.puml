@@ -1,0 +1,30 @@
+@startuml
+left to right direction
+
+rectangle "Браузер клиента" as browser
+
+rectangle "Cloudflare\nDNS + CDN" as cloudflare
+rectangle "NGINX\nОбратный прокси" as nginx
+rectangle "unicorn\nWSGI сервер" as gunicorn
+rectangle "FastApi\nПриложение" as fastapi
+rectangle "PostgreSQL" as postgres
+rectangle "Redis\nКэш" as redis
+
+browser -> cloudflare : HTTPS
+cloudflare -> nginx : HTTPS
+nginx -> gunicorn : HTTP
+gunicorn -> fastapi
+fastapi -> postgres : SQL
+fastapi -> redis : Кэш
+nginx --> browser : Статика
+
+note right of nginx
+  SSL termination
+  Балансировка нагрузки
+end note
+
+note right of fastapi
+  Логирование в файл
+  Метрики Prometheus
+end note
+@enduml

@@ -1,0 +1,25 @@
+@startuml
+left to right direction
+
+actor Пользователь as user
+
+rectangle "Аутентификация" as auth
+rectangle "Поиск книг" as search
+rectangle "Управление каталогом" as manage
+
+database "База данных" as db
+
+user --> auth : "Логин/пароль"
+auth --> db : "Запрос учетных данных"
+db --> auth : "Данные пользователя"
+auth --> user : "Токен сессии"
+
+user --> search : "Поисковый запрос"
+search --> db : "Запрос книг"
+db --> search : "Результаты"
+search --> user : "Список книг"
+
+user --> manage : "Данные новой книги"
+manage --> db : "Сохранение записи"
+manage --> user : "Подтверждение"
+@enduml
