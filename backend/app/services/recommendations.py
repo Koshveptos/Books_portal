@@ -1159,3 +1159,80 @@ class RecommendationService:
         except Exception as e:
             logger.error(f"Error retrieving cached result with key {key}: {str(e)}")
             return None
+
+
+async def get_recommendation_stats_from_db(user_id: int, db: AsyncSession) -> RecommendationStats:
+    """Получение статистики рекомендаций из базы данных"""
+    try:
+        recommendation_service = RecommendationService(db, None)
+        return await recommendation_service.get_recommendation_stats(user_id=user_id)
+    except Exception as e:
+        logger.error(f"Error getting recommendation stats from DB: {str(e)}", exc_info=True)
+        raise RecommendationException("Ошибка при получении статистики рекомендаций")
+
+
+async def get_similar_users_from_db(user_id: int, db: AsyncSession) -> List[Dict[str, Any]]:
+    """Получение похожих пользователей из базы данных"""
+    try:
+        recommendation_service = RecommendationService(db, None)
+        return await recommendation_service.get_similar_users(user_id=user_id)
+    except Exception as e:
+        logger.error(f"Error getting similar users from DB: {str(e)}", exc_info=True)
+        raise RecommendationException("Ошибка при получении похожих пользователей")
+
+
+async def get_author_recommendations_from_db(user_id: int, db: AsyncSession) -> List[BookRecommendation]:
+    """Получение рекомендаций по авторам из базы данных"""
+    try:
+        recommendation_service = RecommendationService(db, None)
+        user_preferences = await recommendation_service._get_user_preferences(user_id)
+        return await recommendation_service._get_author_recommendations(
+            user_preferences=user_preferences,
+            limit=10,
+            min_rating=3.0,
+            min_year=None,
+            max_year=None,
+            min_ratings_count=5,
+            user_id=user_id,
+        )
+    except Exception as e:
+        logger.error(f"Error getting author recommendations from DB: {str(e)}", exc_info=True)
+        raise RecommendationException("Ошибка при получении рекомендаций по авторам")
+
+
+async def get_category_recommendations_from_db(user_id: int, db: AsyncSession) -> List[BookRecommendation]:
+    """Получение рекомендаций по категориям из базы данных"""
+    try:
+        recommendation_service = RecommendationService(db, None)
+        user_preferences = await recommendation_service._get_user_preferences(user_id)
+        return await recommendation_service._get_category_recommendations(
+            user_preferences=user_preferences,
+            limit=10,
+            min_rating=3.0,
+            min_year=None,
+            max_year=None,
+            min_ratings_count=5,
+            user_id=user_id,
+        )
+    except Exception as e:
+        logger.error(f"Error getting category recommendations from DB: {str(e)}", exc_info=True)
+        raise RecommendationException("Ошибка при получении рекомендаций по категориям")
+
+
+async def get_tag_recommendations_from_db(user_id: int, db: AsyncSession) -> List[BookRecommendation]:
+    """Получение рекомендаций по тегам из базы данных"""
+    try:
+        recommendation_service = RecommendationService(db, None)
+        user_preferences = await recommendation_service._get_user_preferences(user_id)
+        return await recommendation_service._get_tag_recommendations(
+            user_preferences=user_preferences,
+            limit=10,
+            min_rating=3.0,
+            min_year=None,
+            max_year=None,
+            min_ratings_count=5,
+            user_id=user_id,
+        )
+    except Exception as e:
+        logger.error(f"Error getting tag recommendations from DB: {str(e)}", exc_info=True)
+        raise RecommendationException("Ошибка при получении рекомендаций по тегам")
