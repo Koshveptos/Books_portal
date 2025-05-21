@@ -11,13 +11,25 @@ from auth import auth_backend, check_admin, current_active_user, fastapi_users
 # Импорты из core
 from core.database import get_db
 from core.exceptions import (
+    AuthenticationException,
+    DatabaseException,
     InvalidUserDataException,
+    PermissionDeniedException,
     UserAlreadyExistsException,
+    UserNotFoundException,
 )
-from core.logger_config import logger
+from core.logger_config import (
+    log_auth_error,
+    log_auth_info,
+    log_auth_warning,
+    log_db_error,
+    log_info,
+    log_validation_error,
+    log_warning,
+)
 
 # Импорты из FastAPI
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from fastapi_users.exceptions import UserAlreadyExists
 
 # Импорты из модулей приложения
@@ -51,40 +63,41 @@ async def refresh_token(
     session: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     try:
-        logger.info(f"Refreshing token for user: {user.email} (id: {user.id})")
+        log_auth_info(f"Refreshing token for user: {user.email} (id: {user.id})")
         new_access_token = await auth_backend.get_strategy().write_token(user)
-        logger.info(f"Token refreshed successfully for user: {user.email}")
+        log_auth_info(f"Token refreshed successfully for user: {user.email}")
         return TokenResponse(access_token=new_access_token, token_type="bearer")
     except Exception as e:
-        logger.error(f"Error refreshing token for user {user.email}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-        )
+        log_auth_error(e, operation="refresh_token")
+        raise AuthenticationException("Недействительный токен обновления")
 
 
 async def logout(user: User = Depends(current_active_user)) -> LogoutResponse:
     """Реализация выхода из системы"""
     try:
-        logger.info(f"User logged out: {user.email} (id: {user.id})")
+        log_auth_info(f"User logged out: {user.email} (id: {user.id})")
         # Здесь могла бы быть реализация инвалидации токена, если бы использовалось хранилище токенов
         # Поскольку используются JWT-токены без хранения состояния,
         # то реального "выхода" не происходит - клиент просто должен удалить токен
         return LogoutResponse(detail="Successfully logged out")
     except Exception as e:
-        logger.error(f"Error during logout for user {user.email}: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error during logout process")
+        log_auth_error(e, operation="logout")
+        raise AuthenticationException("Ошибка при выходе из системы")
 
 
 async def protected_route(user: User = Depends(current_active_user)) -> dict:
-    logger.debug(f"User {user.email} accessed protected route")
-    return {
-        "user": user.email,
-        "is_active": user.is_active,
-        "is_superuser": user.is_superuser,
-        "is_verified": user.is_verified,
-        "is_moderator": user.is_moderator,
-    }
+    try:
+        log_info(f"User {user.email} accessed protected route")
+        return {
+            "user": user.email,
+            "is_active": user.is_active,
+            "is_superuser": user.is_superuser,
+            "is_verified": user.is_verified,
+            "is_moderator": user.is_moderator,
+        }
+    except Exception as e:
+        log_auth_error(e, operation="protected_route")
+        raise AuthenticationException("Ошибка доступа к защищенному маршруту")
 
 
 async def register(
@@ -92,18 +105,18 @@ async def register(
     user_manager=Depends(fastapi_users.get_user_manager),
 ) -> UserRead:
     try:
-        logger.info(f"Registering new user: {user_create.email}")
+        log_auth_info(f"Registering new user: {user_create.email}")
         created_user = await user_manager.create(user_create)
-        logger.info(f"User registered successfully: {created_user.email} (id: {created_user.id})")
+        log_auth_info(f"User registered successfully: {created_user.email} (id: {created_user.id})")
         return UserRead.model_validate(created_user)
     except UserAlreadyExists:
-        logger.warning(f"Registration failed: User with email {user_create.email} already exists")
+        log_auth_warning(f"Registration failed: User with email {user_create.email} already exists")
         raise UserAlreadyExistsException()
     except ValueError as e:
-        logger.warning(f"Registration failed for {user_create.email}: {str(e)}")
+        log_validation_error(e, model_name="User", field="registration")
         raise InvalidUserDataException(message=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error during registration for {user_create.email}: {str(e)}")
+        log_auth_error(e, operation="register", email=user_create.email)
         raise InvalidUserDataException(message=f"Ошибка при регистрации: {str(e)}")
 
 
@@ -119,19 +132,13 @@ async def change_user_status(
         user_service = UserService(db)
         user = await user_service.get_by_id(id)
         if not user:
-            logger.warning(f"Attempted to change status for non-existent user with id: {id}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found",
-            )
+            log_warning(f"Attempted to change status for non-existent user with id: {id}")
+            raise UserNotFoundException(f"Пользователь с ID {id} не найден")
 
         # Запрет на понижение прав самому себе
         if id == current_user.id and current_user.is_superuser and change_status_req.is_superuser is False:
-            logger.warning(f"Admin user {current_user.id} attempted to demote themselves")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Admin cannot demote themselves",
-            )
+            log_warning(f"Admin user {current_user.id} attempted to demote themselves")
+            raise PermissionDeniedException("Администратор не может понизить свои права")
 
         # Обновление статуса пользователя
         update_data = {}
@@ -142,18 +149,15 @@ async def change_user_status(
 
         # Применяем изменения только если есть что менять
         if update_data:
-            logger.info(f"Changing status for user {user.email}: {update_data}")
+            log_info(f"Changing status for user {user.email}: {update_data}")
             for key, value in update_data.items():
                 setattr(user, key, value)
             await user_service.update(user)
 
         return UserRead.model_validate(user)
-    except HTTPException:
+    except (UserNotFoundException, PermissionDeniedException):
         raise
     except Exception as e:
-        logger.error(f"Error changing status for user {id}: {str(e)}")
+        log_db_error(e, operation="change_user_status", table="users", user_id=str(id))
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error changing user status",
-        )
+        raise DatabaseException("Ошибка при изменении статуса пользователя")

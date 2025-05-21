@@ -1,7 +1,18 @@
 from auth import current_active_user
 from core.database import get_db
-from fastapi import APIRouter, Depends, HTTPException, status
-from loguru import logger
+from core.exceptions import (
+    BookNotFoundException,
+    DatabaseException,
+    InvalidBookDataException,
+    PermissionDeniedException,
+)
+from core.logger_config import (
+    log_db_error,
+    log_info,
+    log_validation_error,
+    log_warning,
+)
+from fastapi import APIRouter, Depends, status
 from models.book import Author, Book, Category, Tag
 from models.user import User
 from schemas.book import (
@@ -36,7 +47,7 @@ async def get_books(
     Получить список всех книг. Публичный эндпоинт.
     """
     try:
-        logger.info("Get all books")
+        log_info("Getting all books")
         query = (
             select(Book)
             .order_by(Book.id)
@@ -44,14 +55,11 @@ async def get_books(
         )
         result: Result = await db.execute(query)
         books = result.scalars().all()
-        logger.debug("All books got successfully")
 
         # Преобразуем книги в модели Pydantic, проверяя, что все связи загружены
         book_responses = []
         for book in books:
-            # Проверяем, что связи загружены корректно
             if not (hasattr(book, "authors") and hasattr(book, "categories") and hasattr(book, "tags")):
-                # Если связи не загружены, загружаем их явно
                 book_id = book.id
                 query = (
                     select(Book)
@@ -63,10 +71,11 @@ async def get_books(
 
             book_responses.append(BookResponse.model_validate(book))
 
+        log_info(f"Successfully retrieved {len(book_responses)} books")
         return book_responses
     except Exception as e:
-        logger.error(f"Internal server error {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        log_db_error(e, operation="get_all_books", table="books")
+        raise DatabaseException("Ошибка при получении списка книг")
 
 
 @router.get("/{book_id}", response_model=BookResponse)
@@ -78,7 +87,7 @@ async def get_book(
     Получить книгу по её ID. Публичный эндпоинт.
     """
     try:
-        logger.info("Get book by id")
+        log_info(f"Getting book with ID: {book_id}")
         query = (
             select(Book)
             .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
@@ -86,17 +95,18 @@ async def get_book(
         )
         result = await db.execute(query)
         book = result.scalars().first()
-        if book:
-            return BookResponse.model_validate(book)
-        else:
-            logger.error(f"Book with id {book_id} not found")
-            raise HTTPException(status_code=404, detail="Book not found")
-    except HTTPException:
+
+        if not book:
+            log_warning(f"Book with ID {book_id} not found")
+            raise BookNotFoundException(f"Книга с ID {book_id} не найдена")
+
+        log_info(f"Successfully retrieved book with ID: {book_id}")
+        return BookResponse.model_validate(book)
+    except BookNotFoundException:
         raise
     except Exception as e:
-        await db.rollback()
-        logger.error(f"Unexpected error while getting book: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        log_db_error(e, operation="get_book", table="books")
+        raise DatabaseException("Ошибка при получении книги")
 
 
 # Добавляем те же роуты к books_router для доступа через прямой URL
@@ -125,36 +135,38 @@ async def create_book(
     """
     Создать новую книгу.
     """
-    if not user.is_superuser and not user.is_moderator:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
-        logger.info(f"Creating new book: {book.title}")
-        logger.debug(f"Received book data for creation (raw from Pydantic model): {book!r}")
-        logger.debug(f"Language from Pydantic model before ORM: {book.language} (type: {type(book.language)})")
+        if not user.is_superuser and not user.is_moderator:
+            log_warning(f"User {user.id} attempted to create book without sufficient permissions")
+            raise PermissionDeniedException("Недостаточно прав для создания книги")
+
+        log_info(f"Creating new book: {book.title}")
 
         # Проверка существования авторов
         authors_result = await db.execute(select(Author).where(Author.id.in_(book.authors)))
         authors = authors_result.scalars().all()
         if len(authors) != len(book.authors):
             missing_authors = set(book.authors) - set(a.id for a in authors)
-            logger.error(f"Missing authors: {missing_authors}")
-            raise HTTPException(status_code=400, detail=f"Authors {missing_authors} not found")
+            log_validation_error(ValueError(f"Missing authors: {missing_authors}"), model_name="Book", field="authors")
+            raise InvalidBookDataException(f"Авторы {missing_authors} не найдены")
 
         # Проверка существования категорий
         categories_result = await db.execute(select(Category).where(Category.id.in_(book.categories)))
         categories = categories_result.scalars().all()
         if len(categories) != len(book.categories):
             missing_categories = set(book.categories) - set(c.id for c in categories)
-            logger.error(f"Missing categories: {missing_categories}")
-            raise HTTPException(status_code=400, detail=f"Categories {missing_categories} not found")
+            log_validation_error(
+                ValueError(f"Missing categories: {missing_categories}"), model_name="Book", field="categories"
+            )
+            raise InvalidBookDataException(f"Категории {missing_categories} не найдены")
 
         # Проверка существования тегов
         tags_result = await db.execute(select(Tag).where(Tag.id.in_(book.tags)))
         tags = tags_result.scalars().all()
         if len(tags) != len(book.tags):
             missing_tags = set(book.tags) - set(t.id for t in tags)
-            logger.error(f"Missing tags: {missing_tags}")
-            raise HTTPException(status_code=400, detail=f"Tags {missing_tags} not found")
+            log_validation_error(ValueError(f"Missing tags: {missing_tags}"), model_name="Book", field="tags")
+            raise InvalidBookDataException(f"Теги {missing_tags} не найдены")
 
         # Создание объекта книги
         book_dict = book.model_dump(exclude={"authors", "categories", "tags"})
@@ -167,9 +179,9 @@ async def create_book(
         await db.commit()
         await db.refresh(db_book)
 
-        logger.info(f"Book created successfully with ID: {db_book.id}")
+        log_info(f"Book created successfully with ID: {db_book.id}")
 
-        # Вместо прямой валидации загружаем объект со всеми связями
+        # Загружаем объект со всеми связями
         result = await db.execute(
             select(Book)
             .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
@@ -177,17 +189,16 @@ async def create_book(
         )
         book_with_relations = result.scalar_one()
         return BookResponse.model_validate(book_with_relations)
-    except HTTPException:
-        # Пробрасываем уже созданные HTTP исключения
+    except (PermissionDeniedException, InvalidBookDataException):
         raise
     except IntegrityError as e:
         await db.rollback()
-        logger.error(f"IntegrityError while creating book: {str(e)}")
-        raise HTTPException(status_code=400, detail="Book data is invalid or already exists")
+        log_db_error(e, operation="create_book", table="books")
+        raise InvalidBookDataException("Книга с такими данными уже существует")
     except Exception as e:
         await db.rollback()
-        logger.error(f"Unexpected error while creating book: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        log_db_error(e, operation="create_book", table="books")
+        raise DatabaseException("Ошибка при создании книги")
 
 
 @router.put("/{book_id}", response_model=BookResponse)
@@ -200,10 +211,13 @@ async def update_book(
     """
     Полностью обновить книгу по её ID.
     """
-    if not user.is_superuser and not user.is_moderator:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
-        logger.info(f"Update informations about book{book_id}")
+        if not user.is_superuser and not user.is_moderator:
+            log_warning(f"User {user.id} attempted to update book {book_id} without sufficient permissions")
+            raise PermissionDeniedException("Недостаточно прав для обновления книги")
+
+        log_info(f"Updating book with ID: {book_id}")
+
         query = (
             select(Book)
             .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
@@ -212,64 +226,64 @@ async def update_book(
 
         result = await db.execute(query)
         book = result.scalars().first()
-        if not book:
-            logger.error(f"Book with ID {book_id} does not exist")
-            raise HTTPException(status_code=404, detail="Book not found")
 
+        if not book:
+            log_warning(f"Book with ID {book_id} not found")
+            raise BookNotFoundException(f"Книга с ID {book_id} не найдена")
+
+        # Обновление основных полей
         for name, value in book_update.model_dump(exclude={"authors", "tags", "categories"}).items():
             setattr(book, name, value)
 
-        # обновление авторов
+        # Обновление авторов
         if book_update.authors:
             authors_result = await db.execute(select(Author).where(Author.id.in_(book_update.authors)))
             authors = authors_result.scalars().all()
             if len(authors) != len(book_update.authors):
                 missing_authors = set(book_update.authors) - set(a.id for a in authors)
-                logger.error(f"Missing authors{missing_authors}")
-                raise HTTPException(status_code=400, detail=f"Authors {missing_authors} not found")
+                log_validation_error(
+                    ValueError(f"Missing authors: {missing_authors}"), model_name="Book", field="authors"
+                )
+                raise InvalidBookDataException(f"Авторы {missing_authors} не найдены")
             book.authors = authors
 
-        # обновление категорий
+        # Обновление категорий
         if book_update.categories:
             categories_result = await db.execute(select(Category).where(Category.id.in_(book_update.categories)))
             categories = categories_result.scalars().all()
             if len(categories) != len(book_update.categories):
                 missing_categories = set(book_update.categories) - set(c.id for c in categories)
-                logger.error(f"Missing categories{missing_categories}")
-                raise HTTPException(status_code=400, detail=f"Categories {missing_categories} not found")
+                log_validation_error(
+                    ValueError(f"Missing categories: {missing_categories}"), model_name="Book", field="categories"
+                )
+                raise InvalidBookDataException(f"Категории {missing_categories} не найдены")
             book.categories = categories
 
-        # обновление тегов
+        # Обновление тегов
         if book_update.tags:
             tags_result = await db.execute(select(Tag).where(Tag.id.in_(book_update.tags)))
             tags = tags_result.scalars().all()
             if len(tags) != len(book_update.tags):
                 missing_tags = set(book_update.tags) - set(t.id for t in tags)
-                logger.error(f"Missing tags{missing_tags}")
-                raise HTTPException(status_code=400, detail=f"Tags {missing_tags} not found")
+                log_validation_error(ValueError(f"Missing tags: {missing_tags}"), model_name="Book", field="tags")
+                raise InvalidBookDataException(f"Теги {missing_tags} не найдены")
             book.tags = tags
 
         await db.commit()
         await db.refresh(book)
-        logger.debug(f"Book with ID {book.id} successfully upgraded")
-        # Явно загружаем связи и возвращаем Pydantic-схему
-        result = await db.execute(
-            select(Book)
-            .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
-            .where(Book.id == book.id)
-        )
-        book_with_relations = result.scalar_one()
-        return BookResponse.model_validate(book_with_relations)
-    except HTTPException:
+
+        log_info(f"Book {book_id} updated successfully")
+        return BookResponse.model_validate(book)
+    except (PermissionDeniedException, BookNotFoundException, InvalidBookDataException):
         raise
     except IntegrityError as e:
         await db.rollback()
-        logger.error(f"IntegrityError while updating book: {str(e)}")
-        raise HTTPException(status_code=400, detail="Book data is invalid or already exists")
+        log_db_error(e, operation="update_book", table="books")
+        raise InvalidBookDataException("Некорректные данные для обновления книги")
     except Exception as e:
         await db.rollback()
-        logger.error(f"Unexpected error while updating books{e}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        log_db_error(e, operation="update_book", table="books")
+        raise DatabaseException("Ошибка при обновлении книги")
 
 
 @router.patch("/{book_id}", response_model=BookResponse)
@@ -282,109 +296,119 @@ async def partial_update_book(
     """
     Частично обновить книгу по её ID.
     """
-    if not user.is_superuser and not user.is_moderator:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
-        logger.info(f"Partial update book with ID {book_id}")
+        if not user.is_superuser and not user.is_moderator:
+            log_warning(f"User {user.id} attempted to partially update book {book_id} without sufficient permissions")
+            raise PermissionDeniedException("Недостаточно прав для обновления книги")
+
+        log_info(f"Partially updating book with ID: {book_id}")
+
         query = (
             select(Book)
             .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
             .where(Book.id == book_id)
         )
+
         result = await db.execute(query)
         book = result.scalars().first()
+
         if not book:
-            logger.error(f"Book with ID {book_id} does not exist")
-            raise HTTPException(status_code=404, detail="Book not found")
+            log_warning(f"Book with ID {book_id} not found")
+            raise BookNotFoundException(f"Книга с ID {book_id} не найдена")
 
-        update_data = book_update.model_dump(exclude={"authors", "tags", "categories"}, exclude_unset=True)
+        # Обновление только переданных полей
+        update_data = book_update.model_dump(exclude_unset=True)
+
+        # Обновление основных полей
         for name, value in update_data.items():
-            setattr(book, name, value)
+            if name not in ["authors", "categories", "tags"]:
+                setattr(book, name, value)
 
-        # Обновляем авторов, если они указаны в запросе
-        if book_update.authors is not None:
-            authors_result = await db.execute(select(Author).where(Author.id.in_(book_update.authors)))
+        # Обновление авторов, если они переданы
+        if "authors" in update_data:
+            authors_result = await db.execute(select(Author).where(Author.id.in_(update_data["authors"])))
             authors = authors_result.scalars().all()
-            if len(authors) != len(book_update.authors):
-                missing_authors = set(book_update.authors) - set(a.id for a in authors)
-                logger.error(f"Missing authors: {missing_authors}")
-                raise HTTPException(status_code=400, detail=f"Authors {missing_authors} not found")
+            if len(authors) != len(update_data["authors"]):
+                missing_authors = set(update_data["authors"]) - set(a.id for a in authors)
+                log_validation_error(
+                    ValueError(f"Missing authors: {missing_authors}"), model_name="Book", field="authors"
+                )
+                raise InvalidBookDataException(f"Авторы {missing_authors} не найдены")
             book.authors = authors
 
-        # Обновляем категории, если они указаны в запросе
-        if book_update.categories is not None:
-            categories_result = await db.execute(select(Category).where(Category.id.in_(book_update.categories)))
+        # Обновление категорий, если они переданы
+        if "categories" in update_data:
+            categories_result = await db.execute(select(Category).where(Category.id.in_(update_data["categories"])))
             categories = categories_result.scalars().all()
-            if len(categories) != len(book_update.categories):
-                missing_categories = set(book_update.categories) - set(c.id for c in categories)
-                logger.error(f"Missing categories: {missing_categories}")
-                raise HTTPException(status_code=400, detail=f"Categories {missing_categories} not found")
+            if len(categories) != len(update_data["categories"]):
+                missing_categories = set(update_data["categories"]) - set(c.id for c in categories)
+                log_validation_error(
+                    ValueError(f"Missing categories: {missing_categories}"), model_name="Book", field="categories"
+                )
+                raise InvalidBookDataException(f"Категории {missing_categories} не найдены")
             book.categories = categories
 
-        # Обновляем теги, если они указаны в запросе
-        if book_update.tags is not None:
-            tags_result = await db.execute(select(Tag).where(Tag.id.in_(book_update.tags)))
+        # Обновление тегов, если они переданы
+        if "tags" in update_data:
+            tags_result = await db.execute(select(Tag).where(Tag.id.in_(update_data["tags"])))
             tags = tags_result.scalars().all()
-            if len(tags) != len(book_update.tags):
-                missing_tags = set(book_update.tags) - set(t.id for t in tags)
-                logger.error(f"Missing tags: {missing_tags}")
-                raise HTTPException(status_code=400, detail=f"Tags {missing_tags} not found")
+            if len(tags) != len(update_data["tags"]):
+                missing_tags = set(update_data["tags"]) - set(t.id for t in tags)
+                log_validation_error(ValueError(f"Missing tags: {missing_tags}"), model_name="Book", field="tags")
+                raise InvalidBookDataException(f"Теги {missing_tags} не найдены")
             book.tags = tags
 
         await db.commit()
         await db.refresh(book)
-        logger.debug(f"Book with ID {book.id} successfully partially updated")
 
-        # Явно загружаем связи и возвращаем Pydantic-схему
-        result = await db.execute(
-            select(Book)
-            .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
-            .where(Book.id == book.id)
-        )
-        book_with_relations = result.scalar_one()
-        return BookResponse.model_validate(book_with_relations)
-
-    except HTTPException:
+        log_info(f"Book {book_id} partially updated successfully")
+        return BookResponse.model_validate(book)
+    except (PermissionDeniedException, BookNotFoundException, InvalidBookDataException):
         raise
     except IntegrityError as e:
         await db.rollback()
-        logger.error(f"IntegrityError while partially updating book: {str(e)}")
-        raise HTTPException(status_code=400, detail="Book data is invalid or already exists")
+        log_db_error(e, operation="partial_update_book", table="books")
+        raise InvalidBookDataException("Некорректные данные для обновления книги")
     except Exception as e:
         await db.rollback()
-        logger.error(f"Unexpected error while partially updating book: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        log_db_error(e, operation="partial_update_book", table="books")
+        raise DatabaseException("Ошибка при обновлении книги")
 
 
-@router.delete("/{book_id}", status_code=204)
-async def delete_book(book_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(current_active_user)):
+@router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_book(
+    book_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
     """
     Удалить книгу по её ID.
     """
-    if not user.is_superuser and not user.is_moderator:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
-        logger.info(f"Deleting book with ID {book_id}")
+        if not user.is_superuser and not user.is_moderator:
+            log_warning(f"User {user.id} attempted to delete book {book_id} without sufficient permissions")
+            raise PermissionDeniedException("Недостаточно прав для удаления книги")
+
+        log_info(f"Deleting book with ID: {book_id}")
+
         query = select(Book).where(Book.id == book_id)
         result = await db.execute(query)
         book = result.scalars().first()
 
         if not book:
-            logger.error(f"Book with ID {book_id} not found")
-            raise HTTPException(status_code=404, detail="Book not found")
+            log_warning(f"Book with ID {book_id} not found")
+            raise BookNotFoundException(f"Книга с ID {book_id} не найдена")
 
         await db.delete(book)
         await db.commit()
 
-        logger.info(f"Book with ID {book_id} successfully deleted")
-        return None
-
-    except HTTPException:
+        log_info(f"Book {book_id} deleted successfully")
+    except (PermissionDeniedException, BookNotFoundException):
         raise
     except Exception as e:
         await db.rollback()
-        logger.error(f"Unexpected error while deleting book: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        log_db_error(e, operation="delete_book", table="books")
+        raise DatabaseException("Ошибка при удалении книги")
 
 
 @router.post("/category", response_model=CategoryResponse)
@@ -394,40 +418,32 @@ async def create_category(
     user: User = Depends(current_active_user),
 ):
     """
-    Создать категорию.
+    Создать новую категорию.
     """
-    if not user.is_superuser and not user.is_moderator:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
-        logger.info(f"Создание новой категории: {category.name_categories}")
+        if not user.is_superuser and not user.is_moderator:
+            log_warning(f"User {user.id} attempted to create category without sufficient permissions")
+            raise PermissionDeniedException("Недостаточно прав для создания категории")
 
-        # Проверка на дубликаты
-        stmt = select(Category).where(Category.name_categories == category.name_categories)
-        result = await db.execute(stmt)
-        existing_category = result.scalars().first()
+        log_info(f"Creating new category: {category.name}")
 
-        if existing_category:
-            logger.warning(f"Попытка создать дублирующуюся категорию: {category.name_categories}")
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Категория с именем '{category.name_categories}' уже существует",
-            )
-
-        category_db = Category(**category.model_dump())
-        db.add(category_db)
+        db_category = Category(**category.model_dump())
+        db.add(db_category)
         await db.commit()
-        await db.refresh(category_db)
+        await db.refresh(db_category)
 
-        logger.info(f"Категория успешно создана с ID: {category_db.id}")
-        return category_db
+        log_info(f"Category created successfully with ID: {db_category.id}")
+        return CategoryResponse.model_validate(db_category)
+    except PermissionDeniedException:
+        raise
     except IntegrityError as e:
         await db.rollback()
-        logger.error(f"Ошибка целостности при создании категории: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Категория '{category.name_categories}' уже существует")
+        log_db_error(e, operation="create_category", table="categories")
+        raise InvalidBookDataException("Категория с таким названием уже существует")
     except Exception as e:
         await db.rollback()
-        logger.error(f"Непредвиденная ошибка при создании категории: {str(e)}")
-        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
+        log_db_error(e, operation="create_category", table="categories")
+        raise DatabaseException("Ошибка при создании категории")
 
 
 @router.post("/tag", response_model=TagResponse)
@@ -437,39 +453,32 @@ async def create_tag(
     user: User = Depends(current_active_user),
 ):
     """
-    Создать тег.
+    Создать новый тег.
     """
-    if not user.is_superuser and not user.is_moderator:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
     try:
-        logger.info(f"Создание нового тега: {tag.name_tag}")
+        if not user.is_superuser and not user.is_moderator:
+            log_warning(f"User {user.id} attempted to create tag without sufficient permissions")
+            raise PermissionDeniedException("Недостаточно прав для создания тега")
 
-        # Проверка на дубликаты
-        stmt = select(Tag).where(Tag.name_tag == tag.name_tag)
-        result = await db.execute(stmt)
-        existing_tag = result.scalars().first()
+        log_info(f"Creating new tag: {tag.name}")
 
-        if existing_tag:
-            logger.warning(f"Попытка создать дублирующийся тег: {tag.name_tag}")
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail=f"Тег с именем '{tag.name_tag}' уже существует"
-            )
-
-        tag_db = Tag(**tag.model_dump())
-        db.add(tag_db)
+        db_tag = Tag(**tag.model_dump())
+        db.add(db_tag)
         await db.commit()
-        await db.refresh(tag_db)
+        await db.refresh(db_tag)
 
-        logger.info(f"Тег успешно создан с ID: {tag_db.id}")
-        return tag_db
+        log_info(f"Tag created successfully with ID: {db_tag.id}")
+        return TagResponse.model_validate(db_tag)
+    except PermissionDeniedException:
+        raise
     except IntegrityError as e:
         await db.rollback()
-        logger.error(f"Ошибка целостности при создании тега: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Тег '{tag.name_tag}' уже существует")
+        log_db_error(e, operation="create_tag", table="tags")
+        raise InvalidBookDataException("Тег с таким названием уже существует")
     except Exception as e:
         await db.rollback()
-        logger.error(f"Непредвиденная ошибка при создании тега: {str(e)}")
-        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
+        log_db_error(e, operation="create_tag", table="tags")
+        raise DatabaseException("Ошибка при создании тега")
 
 
 # Для URL /books/ (без /books/books/)

@@ -2,8 +2,18 @@ from typing import List, Optional
 
 from auth import current_active_user
 from core.database import get_db
-from core.logger_config import logger
-from fastapi import APIRouter, Depends, HTTPException, Query
+from core.exceptions import (
+    DatabaseException,
+    InvalidSearchQueryException,
+    PermissionDeniedException,
+    SearchException,
+)
+from core.logger_config import (
+    log_db_error,
+    log_info,
+    log_warning,
+)
+from fastapi import APIRouter, Depends, Query
 from models.book import Book
 from models.user import User
 from schemas.book import BookResponse
@@ -44,16 +54,16 @@ async def search_books(
     Если операторы не указаны, по умолчанию используется AND с учетом морфологии.
     """
     try:
-        logger.info(f"Пользователь {user.email} выполняет поиск: '{q}'{f' в поле {field}' if field else ''}")
+        log_info(f"User {user.email} searching for: '{q}'{f' in field {field}' if field else ''}")
 
         books_service = BooksService(db)
         books = await books_service.search_books(q, limit, field)
 
         if not books:
-            logger.info(f"По запросу '{q}' книги не найдены")
+            log_info(f"No books found for query: '{q}'")
             return []
 
-        logger.info(f"По запросу '{q}' найдено {len(books)} книг")
+        log_info(f"Found {len(books)} books for query: '{q}'")
 
         book_responses = []
         for book in books:
@@ -72,8 +82,8 @@ async def search_books(
         return book_responses
 
     except Exception as e:
-        logger.error(f"Ошибка при поиске книг: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Ошибка при выполнении поиска")
+        log_db_error(e, operation="search_books", query=q, field=field)
+        raise SearchException("Ошибка при выполнении поиска")
 
 
 @router.get("/by-author", response_model=List[BookResponse])
@@ -89,16 +99,16 @@ async def search_books_by_author(
     Поиск выполняется по частичному совпадению имени автора.
     """
     try:
-        logger.info(f"Пользователь {user.email} ищет книги по автору: '{name}'")
+        log_info(f"User {user.email} searching books by author: '{name}'")
 
         books_service = BooksService(db)
         books = await books_service.search_books_by_author(name, limit)
 
         if not books:
-            logger.info(f"Книги по автору '{name}' не найдены")
+            log_info(f"No books found for author: '{name}'")
             return []
 
-        logger.info(f"Найдено {len(books)} книг по автору '{name}'")
+        log_info(f"Found {len(books)} books for author: '{name}'")
 
         book_responses = []
         for book in books:
@@ -117,8 +127,8 @@ async def search_books_by_author(
         return book_responses
 
     except Exception as e:
-        logger.error(f"Ошибка при поиске книг по автору: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Ошибка при выполнении поиска по автору")
+        log_db_error(e, operation="search_books_by_author", author=name)
+        raise SearchException("Ошибка при выполнении поиска по автору")
 
 
 @router.get("/suggest", response_model=List[str])
@@ -133,10 +143,10 @@ async def suggest_corrections(
     Использует триграммное сравнение для нахождения похожих слов.
     """
     try:
-        logger.info(f"Пользователь {user.email} запрашивает подсказки для запроса: '{q}'")
+        log_info(f"User {user.email} requesting suggestions for query: '{q}'")
 
         if not q or len(q.strip()) < 3:
-            logger.info("Запрос слишком короткий для подсказок")
+            log_info("Query too short for suggestions")
             return []
 
         sql = """
@@ -166,12 +176,12 @@ async def suggest_corrections(
         result = await db.execute(text(sql), {"query": q.strip()})
         suggestions = [row.word for row in result.fetchall()]
 
-        logger.info(f"Для запроса '{q}' найдено {len(suggestions)} подсказок")
+        log_info(f"Found {len(suggestions)} suggestions for query: '{q}'")
         return suggestions
 
     except Exception as e:
-        logger.error(f"Ошибка при формировании подсказок: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Ошибка при формировании подсказок для поиска")
+        log_db_error(e, operation="suggest_corrections", query=q)
+        raise SearchException("Ошибка при формировании подсказок для поиска")
 
 
 @router.post("/update-vectors")
@@ -185,21 +195,21 @@ async def update_search_vectors(
     Требуются права администратора.
     """
     if not user.is_superuser:
-        logger.warning(f"Пользователь {user.email} пытается обновить поисковые векторы без прав администратора")
-        raise HTTPException(status_code=403, detail="Требуются права администратора")
+        log_warning(f"User {user.email} attempting to update search vectors without admin rights")
+        raise PermissionDeniedException(message="Требуются права администратора")
 
     try:
-        logger.info(f"Пользователь {user.email} обновляет поисковые векторы")
+        log_info(f"User {user.email} updating search vectors")
 
         books_service = BooksService(db)
         count = await books_service.update_search_vectors()
 
-        logger.info(f"Поисковые векторы обновлены для {count} книг")
+        log_info(f"Search vectors updated for {count} books")
         return {"message": f"Поисковые векторы обновлены для {count} книг"}
 
     except Exception as e:
-        logger.error(f"Ошибка при обновлении поисковых векторов: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Ошибка при обновлении поисковых векторов")
+        log_db_error(e, operation="update_search_vectors")
+        raise DatabaseException("Ошибка при обновлении поисковых векторов")
 
 
 @router.get("/field/{field_name}", response_model=List[BookResponse])
@@ -223,22 +233,22 @@ async def search_by_field(
     """
     valid_fields = ["title", "description", "publisher", "isbn"]
     if field_name not in valid_fields:
-        logger.warning(f"Пользователь {user.email} пытается искать по неверному полю: {field_name}")
-        raise HTTPException(
-            status_code=400, detail=f"Неверное поле для поиска. Допустимые поля: {', '.join(valid_fields)}"
+        log_warning(f"User {user.email} attempting to search by invalid field: {field_name}")
+        raise InvalidSearchQueryException(
+            message=f"Неверное поле для поиска. Допустимые поля: {', '.join(valid_fields)}"
         )
 
     try:
-        logger.info(f"Пользователь {user.email} выполняет поиск по полю {field_name}: '{q}'")
+        log_info(f"User {user.email} searching by field {field_name}: '{q}'")
 
         books_service = BooksService(db)
         books = await books_service.search_by_field(field_name, q, limit)
 
         if not books:
-            logger.info(f"По запросу '{q}' в поле {field_name} книги не найдены")
+            log_info(f"No books found for query '{q}' in field {field_name}")
             return []
 
-        logger.info(f"По запросу '{q}' в поле {field_name} найдено {len(books)} книг")
+        log_info(f"Found {len(books)} books for query '{q}' in field {field_name}")
 
         book_responses = []
         for book in books:
@@ -256,9 +266,11 @@ async def search_by_field(
 
         return book_responses
 
+    except InvalidSearchQueryException:
+        raise
     except Exception as e:
-        logger.error(f"Ошибка при поиске книг по полю {field_name}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Ошибка при выполнении поиска по полю {field_name}")
+        log_db_error(e, operation="search_by_field", field=field_name, query=q)
+        raise SearchException("Ошибка при выполнении поиска по полю")
 
 
 @router.get("/advanced", response_model=List[BookResponse])
@@ -281,8 +293,8 @@ async def advanced_search(
     Поиск учитывает морфологию русского языка.
     """
     try:
-        logger.info(
-            f"Пользователь {user.email} выполняет расширенный поиск с параметрами: q='{q}', title='{title}', author='{author}', category='{category}', tag='{tag}'"
+        log_info(
+            f"User {user.email} performing advanced search with parameters: q='{q}', title='{title}', author='{author}', category='{category}', tag='{tag}'"
         )
 
         # Начинаем с общего поиска
@@ -290,7 +302,7 @@ async def advanced_search(
         books = await books_service.search_books(q, limit=100)  # Увеличиваем лимит для последующей фильтрации
 
         if not books:
-            logger.info(f"По общему запросу '{q}' книги не найдены")
+            log_info(f"No books found for general query: '{q}'")
             return []
 
         # Фильтруем результаты по дополнительным критериям
@@ -300,7 +312,7 @@ async def advanced_search(
         if title:
             title_lower = title.lower()
             filtered_books = [book for book in filtered_books if title_lower in book.title.lower()]
-            logger.debug(f"После фильтрации по названию '{title}' осталось {len(filtered_books)} книг")
+            log_info(f"After filtering by title '{title}' remaining {len(filtered_books)} books")
 
         # Фильтр по автору
         if author and filtered_books:
@@ -308,7 +320,7 @@ async def advanced_search(
             filtered_books = [
                 book for book in filtered_books if any(author_lower in a.name.lower() for a in book.authors)
             ]
-            logger.debug(f"После фильтрации по автору '{author}' осталось {len(filtered_books)} книг")
+            log_info(f"After filtering by author '{author}' remaining {len(filtered_books)} books")
 
         # Фильтр по категории
         if category and filtered_books:
@@ -318,7 +330,7 @@ async def advanced_search(
                 for book in filtered_books
                 if any(category_lower in c.name_categories.lower() for c in book.categories)
             ]
-            logger.debug(f"После фильтрации по категории '{category}' осталось {len(filtered_books)} книг")
+            log_info(f"After filtering by category '{category}' remaining {len(filtered_books)} books")
 
         # Фильтр по тегу
         if tag and filtered_books:
@@ -326,16 +338,16 @@ async def advanced_search(
             filtered_books = [
                 book for book in filtered_books if any(tag_lower in t.name_tag.lower() for t in book.tags)
             ]
-            logger.debug(f"После фильтрации по тегу '{tag}' осталось {len(filtered_books)} книг")
+            log_info(f"After filtering by tag '{tag}' remaining {len(filtered_books)} books")
 
         # Ограничиваем количество результатов
         result_books = filtered_books[:limit]
 
         if not result_books:
-            logger.info("После применения всех фильтров книги не найдены")
+            log_info("No books found after applying all filters")
             return []
 
-        logger.info(f"По расширенному запросу найдено {len(result_books)} книг")
+        log_info(f"Found {len(result_books)} books for advanced query")
 
         # Преобразуем в Pydantic-модели
         book_responses = []
@@ -355,5 +367,5 @@ async def advanced_search(
         return book_responses
 
     except Exception as e:
-        logger.error(f"Ошибка при выполнении расширенного поиска: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Ошибка при выполнении расширенного поиска")
+        log_db_error(e, operation="advanced_search", query=q, title=title, author=author, category=category, tag=tag)
+        raise SearchException("Ошибка при выполнении расширенного поиска")

@@ -1,11 +1,9 @@
 import json
 from typing import Any, Dict, List, Optional
 
+from core.exceptions import NotEnoughDataForRecommendationException, RecommendationException
 from core.logger_config import logger
 from fastapi.encoders import jsonable_encoder
-from models.book import (
-    Book,
-)
 from redis import Redis
 from schemas.recommendations import BookRecommendation, RecommendationStats, RecommendationType
 from sqlalchemy import text
@@ -35,181 +33,210 @@ class RecommendationService:
     ) -> List[BookRecommendation]:
         """
         Получает рекомендации книг для пользователя.
-
-        Аргументы:
-            user_id: ID пользователя
-            limit: Максимальное количество рекомендаций (максимум 20)
-            min_rating: Минимальный рейтинг книг
-            min_year: Минимальный год издания
-            max_year: Максимальный год издания
-            min_ratings_count: Минимальное количество оценок
-            recommendation_type: Тип рекомендаций
-            cache: Использовать ли кэширование
-
-        Возвращает:
-            Список рекомендованных книг
         """
-        # Ограничиваем максимальное количество рекомендаций
-        if limit > 20:
-            logger.warning(f"Limiting recommendations from {limit} to 20")
-            limit = 20
-
-        # Проверяем наличие кэшированных результатов, если необходимо кэширование
-        if cache:
-            cache_key = self.get_cache_key(
-                user_id,
-                "recommendations",
-                type=recommendation_type.value,
-                limit=limit,
-                min_rating=min_rating,
-                min_year=min_year,
-                max_year=max_year,
-                min_ratings_count=min_ratings_count,
-            )
-            cached_recommendations = self.get_cached_result(cache_key)
-            if cached_recommendations:
-                logger.info(f"Using cached recommendations for user {user_id}")
-                return [BookRecommendation(**item) for item in cached_recommendations]
-
         try:
-            # Определяем стратегию рекомендаций в зависимости от типа
+            logger.info(f"Начинаем получение рекомендаций для пользователя {user_id}")
+
+            # Ограничиваем максимальное количество рекомендаций
+            if limit > 20:
+                logger.warning(f"Limiting recommendations from {limit} to 20")
+                limit = 20
+
+            # Проверяем наличие кэшированных результатов, если необходимо кэширование
+            cache_key = None
+            if cache and self.redis_client:
+                try:
+                    cache_key = self.get_cache_key(
+                        user_id,
+                        "recommendations",
+                        type=recommendation_type.value,
+                        limit=limit,
+                        min_rating=min_rating,
+                        min_year=min_year,
+                        max_year=max_year,
+                        min_ratings_count=min_ratings_count,
+                    )
+                    cached_recommendations = self.get_cached_result(cache_key)
+                    if cached_recommendations:
+                        logger.info(f"Using cached recommendations for user {user_id}")
+                        return [BookRecommendation(**item) for item in cached_recommendations]
+                except Exception as e:
+                    logger.error(f"Error getting cached recommendations: {str(e)}")
+                    # Продолжаем выполнение без кэша
+
+            # Получаем предпочтения пользователя
             user_preferences = await self._get_user_preferences(user_id)
+
+            # Проверяем наличие данных для рекомендаций
+            if not user_preferences.get("rated_books"):
+                logger.warning(f"Недостаточно данных для рекомендаций пользователя {user_id}")
+                raise NotEnoughDataForRecommendationException(
+                    "Недостаточно данных для формирования рекомендаций. " "Пожалуйста, оцените несколько книг."
+                )
 
             # Получаем рекомендации в соответствии с выбранной стратегией
             recommendations = []
-            if recommendation_type == RecommendationType.COLLABORATIVE:
-                recommendations = await self._get_collaborative_recommendations(
-                    user_id=user_id,
-                    limit=limit,
-                    min_rating=min_rating,
-                    min_year=min_year,
-                    max_year=max_year,
-                    min_ratings_count=min_ratings_count,
-                )
-            elif recommendation_type == RecommendationType.AUTHOR:
-                recommendations = await self._get_author_recommendations(
-                    user_preferences=user_preferences,
-                    limit=limit,
-                    min_rating=min_rating,
-                    min_year=min_year,
-                    max_year=max_year,
-                    min_ratings_count=min_ratings_count,
-                    user_id=user_id,
-                )
-            elif recommendation_type == RecommendationType.CATEGORY:
-                recommendations = await self._get_category_recommendations(
-                    user_preferences=user_preferences,
-                    limit=limit,
-                    min_rating=min_rating,
-                    min_year=min_year,
-                    max_year=max_year,
-                    min_ratings_count=min_ratings_count,
-                    user_id=user_id,
-                )
-            elif recommendation_type == RecommendationType.TAG:
-                recommendations = await self._get_tag_recommendations(
-                    user_preferences=user_preferences,
-                    limit=limit,
-                    min_rating=min_rating,
-                    min_year=min_year,
-                    max_year=max_year,
-                    min_ratings_count=min_ratings_count,
-                    user_id=user_id,
-                )
-            elif recommendation_type == RecommendationType.POPULARITY:
-                recommendations = await self._get_popularity_recommendations(
-                    limit=limit,
-                    min_rating=min_rating,
-                    min_year=min_year,
-                    max_year=max_year,
-                    min_ratings_count=min_ratings_count,
-                    user_id=user_id,
-                )
-            elif recommendation_type == RecommendationType.CONTENT:
-                recommendations = await self._get_content_recommendations(
-                    user_preferences=user_preferences,
-                    limit=limit,
-                    min_rating=min_rating,
-                    min_year=min_year,
-                    max_year=max_year,
-                    min_ratings_count=min_ratings_count,
-                    user_id=user_id,
-                )
-            else:  # RecommendationType.HYBRID
-                # Для гибридных рекомендаций объединяем результаты различных стратегий
-                collaborative_recs = await self._get_collaborative_recommendations(
-                    user_id=user_id,
-                    limit=limit,
-                    min_rating=min_rating,
-                    min_year=min_year,
-                    max_year=max_year,
-                    min_ratings_count=min_ratings_count,
-                )
+            logger.info(f"Получаем рекомендации типа {recommendation_type.value}")
 
-                content_recs = await self._get_content_recommendations(
-                    user_preferences=user_preferences,
-                    limit=limit,
-                    min_rating=min_rating,
-                    min_year=min_year,
-                    max_year=max_year,
-                    min_ratings_count=min_ratings_count,
-                    user_id=user_id,
-                )
-
-                popularity_recs = await self._get_popularity_recommendations(
-                    limit=limit,
-                    min_rating=min_rating,
-                    min_year=min_year,
-                    max_year=max_year,
-                    min_ratings_count=min_ratings_count,
-                    user_id=user_id,
-                )
-
-                # Объединяем все рекомендации с весами
-                hybrid_recs = {}
-
-                # Добавляем коллаборативные рекомендации с весом 2.0
-                for rec in collaborative_recs:
-                    hybrid_recs[rec.id] = {"rec": rec, "score": rec.score * 2.0}
-
-                # Добавляем контентные рекомендации с весом 1.5
-                for rec in content_recs:
-                    if rec.id in hybrid_recs:
-                        hybrid_recs[rec.id]["score"] += rec.score * 1.5
-                    else:
-                        hybrid_recs[rec.id] = {"rec": rec, "score": rec.score * 1.5}
-
-                # Добавляем популярные рекомендации с весом 1.0
-                for rec in popularity_recs:
-                    if rec.id in hybrid_recs:
-                        hybrid_recs[rec.id]["score"] += rec.score * 1.0
-                    else:
-                        hybrid_recs[rec.id] = {"rec": rec, "score": rec.score * 1.0}
-
-                # Сортируем результаты по итоговому весу
-                sorted_recs = sorted(hybrid_recs.values(), key=lambda x: x["score"], reverse=True)
-                recommendations = [
-                    BookRecommendation(
-                        id=item["rec"].id,
-                        title=item["rec"].title,
-                        author=item["rec"].author,
-                        category=item["rec"].category,
-                        rating=item["rec"].rating,
-                        score=item["score"],
-                        reason=f"Комбинированная рекомендация (вес: {item['score']:.2f})",
+            try:
+                if recommendation_type == RecommendationType.COLLABORATIVE:
+                    recommendations = await self._get_collaborative_recommendations(
+                        user_id=user_id,
+                        limit=limit,
+                        min_rating=min_rating,
+                        min_year=min_year,
+                        max_year=max_year,
+                        min_ratings_count=min_ratings_count,
                     )
-                    for item in sorted_recs[:limit]
-                ]
+                elif recommendation_type == RecommendationType.AUTHOR:
+                    recommendations = await self._get_author_recommendations(
+                        user_preferences=user_preferences,
+                        limit=limit,
+                        min_rating=min_rating,
+                        min_year=min_year,
+                        max_year=max_year,
+                        min_ratings_count=min_ratings_count,
+                        user_id=user_id,
+                    )
+                elif recommendation_type == RecommendationType.CATEGORY:
+                    recommendations = await self._get_category_recommendations(
+                        user_preferences=user_preferences,
+                        limit=limit,
+                        min_rating=min_rating,
+                        min_year=min_year,
+                        max_year=max_year,
+                        min_ratings_count=min_ratings_count,
+                        user_id=user_id,
+                    )
+                elif recommendation_type == RecommendationType.TAG:
+                    recommendations = await self._get_tag_recommendations(
+                        user_preferences=user_preferences,
+                        limit=limit,
+                        min_rating=min_rating,
+                        min_year=min_year,
+                        max_year=max_year,
+                        min_ratings_count=min_ratings_count,
+                        user_id=user_id,
+                    )
+                elif recommendation_type == RecommendationType.POPULARITY:
+                    recommendations = await self._get_popularity_recommendations(
+                        limit=limit,
+                        min_rating=min_rating,
+                        min_year=min_year,
+                        max_year=max_year,
+                        min_ratings_count=min_ratings_count,
+                        user_id=user_id,
+                    )
+                elif recommendation_type == RecommendationType.CONTENT:
+                    recommendations = await self._get_content_recommendations(
+                        user_preferences=user_preferences,
+                        limit=limit,
+                        min_rating=min_rating,
+                        min_year=min_year,
+                        max_year=max_year,
+                        min_ratings_count=min_ratings_count,
+                        user_id=user_id,
+                    )
+                else:  # RecommendationType.HYBRID
+                    logger.info("Получаем гибридные рекомендации")
+                    # Для гибридных рекомендаций объединяем результаты различных стратегий
+                    collaborative_recs = await self._get_collaborative_recommendations(
+                        user_id=user_id,
+                        limit=limit,
+                        min_rating=min_rating,
+                        min_year=min_year,
+                        max_year=max_year,
+                        min_ratings_count=min_ratings_count,
+                    )
+                    logger.info(f"Получено {len(collaborative_recs)} коллаборативных рекомендаций")
+
+                    content_recs = await self._get_content_recommendations(
+                        user_preferences=user_preferences,
+                        limit=limit,
+                        min_rating=min_rating,
+                        min_year=min_year,
+                        max_year=max_year,
+                        min_ratings_count=min_ratings_count,
+                        user_id=user_id,
+                    )
+                    logger.info(f"Получено {len(content_recs)} контентных рекомендаций")
+
+                    popularity_recs = await self._get_popularity_recommendations(
+                        limit=limit,
+                        min_rating=min_rating,
+                        min_year=min_year,
+                        max_year=max_year,
+                        min_ratings_count=min_ratings_count,
+                        user_id=user_id,
+                    )
+                    logger.info(f"Получено {len(popularity_recs)} популярных рекомендаций")
+
+                    # Объединяем все рекомендации с весами
+                    hybrid_recs = {}
+
+                    # Добавляем коллаборативные рекомендации с весом 2.0
+                    for rec in collaborative_recs:
+                        hybrid_recs[rec.id] = {"rec": rec, "score": rec.score * 2.0}
+
+                    # Добавляем контентные рекомендации с весом 1.5
+                    for rec in content_recs:
+                        if rec.id in hybrid_recs:
+                            hybrid_recs[rec.id]["score"] += rec.score * 1.5
+                        else:
+                            hybrid_recs[rec.id] = {"rec": rec, "score": rec.score * 1.5}
+
+                    # Добавляем популярные рекомендации с весом 1.0
+                    for rec in popularity_recs:
+                        if rec.id in hybrid_recs:
+                            hybrid_recs[rec.id]["score"] += rec.score * 1.0
+                        else:
+                            hybrid_recs[rec.id] = {"rec": rec, "score": rec.score * 1.0}
+
+                    # Сортируем результаты по итоговому весу
+                    sorted_recs = sorted(hybrid_recs.values(), key=lambda x: x["score"], reverse=True)
+                    recommendations = [
+                        BookRecommendation(
+                            id=item["rec"].id,
+                            title=item["rec"].title,
+                            author=item["rec"].author,
+                            category=item["rec"].category,
+                            rating=item["rec"].rating,
+                            score=item["score"],
+                            reason=f"Комбинированная рекомендация (вес: {item['score']:.2f})",
+                            recommendation_type=RecommendationType.HYBRID,
+                        )
+                        for item in sorted_recs[:limit]
+                    ]
+                    logger.info(f"Сформировано {len(recommendations)} гибридных рекомендаций")
+            except Exception as e:
+                logger.error(
+                    f"Ошибка при получении рекомендаций типа {recommendation_type.value}: {str(e)}", exc_info=True
+                )
+                raise
+
+            if not recommendations:
+                logger.warning(f"Не найдено рекомендаций для пользователя {user_id}")
+                raise NotEnoughDataForRecommendationException(
+                    "Не удалось найти подходящие рекомендации. " "Попробуйте изменить параметры запроса."
+                )
 
             # Кэшируем результаты
-            if cache and recommendations:
-                self.cache_result(cache_key, recommendations, expire_seconds=3600)
+            if cache and cache_key and self.redis_client:
+                try:
+                    self.cache_result(cache_key, recommendations, expire_seconds=3600)
+                    logger.info(f"Рекомендации закэшированы для пользователя {user_id}")
+                except Exception as e:
+                    logger.error(f"Error caching recommendations: {str(e)}")
+                    # Продолжаем выполнение без кэширования
 
+            logger.info(f"Успешно получены {len(recommendations)} рекомендаций для пользователя {user_id}")
             return recommendations
+
+        except NotEnoughDataForRecommendationException:
+            raise
         except Exception as e:
-            logger.error(f"Error getting recommendations for user {user_id}: {str(e)}")
-            # В случае ошибки возвращаем пустой список
-            return []
+            logger.error(f"Error getting recommendations for user {user_id}: {str(e)}", exc_info=True)
+            raise RecommendationException("Ошибка при получении рекомендаций")
 
     async def get_similar_users(
         self, user_id: int, limit: int = 10, min_common_ratings: int = 3
@@ -275,37 +302,45 @@ class RecommendationService:
             logger.error(f"Ошибка при поиске похожих пользователей: {str(e)}", exc_info=True)
             raise
 
-    async def _get_recommendation_reason(self, book: Book, user_preferences: Dict[str, Any]) -> str:
+    async def _get_recommendation_reason(self, book: Any, user_preferences: Dict[str, Any]) -> str:
         """
         Получить причину рекомендации книги.
         """
-        reasons = []
+        try:
+            logger.info(f"Формируем причину рекомендации для книги {book.id}")
+            reasons = []
 
-        # Проверяем совпадение с авторами
-        if book.authors:
-            for author in book.authors:
-                if author.id in user_preferences.get("authors", {}):
-                    reasons.append(f"Вам понравились книги автора {author.name}")
-                    break
+            # Проверяем совпадение с авторами
+            if book.author:
+                author_names = book.author.split(", ")
+                for author_name in author_names:
+                    if any(
+                        author_name in pref.get("name", "") for pref in user_preferences.get("authors", {}).values()
+                    ):
+                        reasons.append(f"Вам понравились книги автора {author_name}")
+                        break
 
-        # Проверяем совпадение с категориями
-        if book.categories:
-            for category in book.categories:
-                if category.id in user_preferences.get("categories", {}):
-                    reasons.append(f"Вам нравятся книги в категории {category.name}")
-                    break
+            # Проверяем совпадение с категориями
+            if book.category:
+                category_names = book.category.split(", ")
+                for category_name in category_names:
+                    if any(
+                        category_name in pref.get("name", "")
+                        for pref in user_preferences.get("categories", {}).values()
+                    ):
+                        reasons.append(f"Вам нравятся книги в категории {category_name}")
+                        break
 
-        # Проверяем совпадение с тегами
-        if book.tags:
-            for tag in book.tags:
-                if tag.id in user_preferences.get("tags", {}):
-                    reasons.append(f"Вам интересны книги с тегом {tag.name}")
-                    break
+            if not reasons:
+                reasons.append("Похожие пользователи высоко оценили эту книгу")
 
-        if not reasons:
-            reasons.append("Похожие пользователи высоко оценили эту книгу")
+            reason = " и ".join(reasons)
+            logger.info(f"Сформирована причина рекомендации для книги {book.id}: {reason}")
+            return reason
 
-        return " и ".join(reasons)
+        except Exception as e:
+            logger.error(f"Ошибка при формировании причины рекомендации для книги {book.id}: {str(e)}", exc_info=True)
+            return "Рекомендуемая книга"
 
     async def _get_author_recommendations(
         self,
@@ -437,6 +472,20 @@ class RecommendationService:
         Получить предпочтения пользователя на основе его оценок, лайков и избранного.
         """
         try:
+            logger.info(f"Начинаем получение предпочтений для пользователя {user_id}")
+
+            # Получаем список оцененных книг
+            rated_books_query = text(
+                """
+                SELECT DISTINCT book_id
+                FROM ratings
+                WHERE user_id = :user_id
+                """
+            )
+            rated_books_result = await self.db.execute(rated_books_query, {"user_id": user_id})
+            rated_books = [row[0] for row in rated_books_result.fetchall()]
+            logger.info(f"Получено {len(rated_books)} оцененных книг")
+
             # Получаем предпочтения по оценкам
             ratings_query = text(
                 """
@@ -444,24 +493,29 @@ class RecommendationService:
                     a.id as author_id,
                     a.name as author_name,
                     c.id as category_id,
-                    c.name as category_name,
+                    c.name_categories as category_name,
                     t.id as tag_id,
-                    t.name as tag_name,
+                    t.name_tag as tag_name,
                     AVG(r.rating) as avg_rating,
                     COUNT(*) as interaction_count
                 FROM ratings r
                 JOIN books b ON r.book_id = b.id
                 LEFT JOIN book_authors ba ON b.id = ba.book_id
                 LEFT JOIN authors a ON ba.author_id = a.id
-                LEFT JOIN book_categories bc ON b.id = bc.book_id
+                LEFT JOIN books_categories bc ON b.id = bc.book_id
                 LEFT JOIN categories c ON bc.category_id = c.id
-                LEFT JOIN book_tags bt ON b.id = bt.book_id
+                LEFT JOIN books_tags bt ON b.id = bt.book_id
                 LEFT JOIN tags t ON bt.tag_id = t.id
                 WHERE r.user_id = :user_id
-                GROUP BY a.id, a.name, c.id, c.name, t.id, t.name
+                GROUP BY a.id, a.name, c.id, c.name_categories, t.id, t.name_tag
                 HAVING AVG(r.rating) >= 3.0
             """
             )
+
+            logger.info("Выполняем запрос для получения предпочтений по оценкам")
+            ratings_result = await self.db.execute(ratings_query, {"user_id": user_id})
+            ratings_data = ratings_result.fetchall()
+            logger.info(f"Получено {len(ratings_data)} записей по оценкам")
 
             # Получаем предпочтения по лайкам
             likes_query = text(
@@ -470,21 +524,26 @@ class RecommendationService:
                     a.id as author_id,
                     a.name as author_name,
                     c.id as category_id,
-                    c.name as category_name,
+                    c.name_categories as category_name,
                     t.id as tag_id,
-                    t.name as tag_name,
+                    t.name_tag as tag_name,
                     1 as interaction_count
                 FROM likes l
                 JOIN books b ON l.book_id = b.id
                 LEFT JOIN book_authors ba ON b.id = ba.book_id
                 LEFT JOIN authors a ON ba.author_id = a.id
-                LEFT JOIN book_categories bc ON b.id = bc.book_id
+                LEFT JOIN books_categories bc ON b.id = bc.book_id
                 LEFT JOIN categories c ON bc.category_id = c.id
-                LEFT JOIN book_tags bt ON b.id = bt.book_id
+                LEFT JOIN books_tags bt ON b.id = bt.book_id
                 LEFT JOIN tags t ON bt.tag_id = t.id
                 WHERE l.user_id = :user_id
             """
             )
+
+            logger.info("Выполняем запрос для получения предпочтений по лайкам")
+            likes_result = await self.db.execute(likes_query, {"user_id": user_id})
+            likes_data = likes_result.fetchall()
+            logger.info(f"Получено {len(likes_data)} записей по лайкам")
 
             # Получаем предпочтения по избранному
             favorites_query = text(
@@ -493,32 +552,32 @@ class RecommendationService:
                     a.id as author_id,
                     a.name as author_name,
                     c.id as category_id,
-                    c.name as category_name,
+                    c.name_categories as category_name,
                     t.id as tag_id,
-                    t.name as tag_name,
+                    t.name_tag as tag_name,
                     1 as interaction_count
                 FROM favorites f
                 JOIN books b ON f.book_id = b.id
                 LEFT JOIN book_authors ba ON b.id = ba.book_id
                 LEFT JOIN authors a ON ba.author_id = a.id
-                LEFT JOIN book_categories bc ON b.id = bc.book_id
+                LEFT JOIN books_categories bc ON b.id = bc.book_id
                 LEFT JOIN categories c ON bc.category_id = c.id
-                LEFT JOIN book_tags bt ON b.id = bt.book_id
+                LEFT JOIN books_tags bt ON b.id = bt.book_id
                 LEFT JOIN tags t ON bt.tag_id = t.id
                 WHERE f.user_id = :user_id
             """
             )
 
-            # Выполняем запросы
-            ratings_result = await self.db.execute(ratings_query, {"user_id": user_id})
-            likes_result = await self.db.execute(likes_query, {"user_id": user_id})
+            logger.info("Выполняем запрос для получения предпочтений по избранному")
             favorites_result = await self.db.execute(favorites_query, {"user_id": user_id})
+            favorites_data = favorites_result.fetchall()
+            logger.info(f"Получено {len(favorites_data)} записей по избранному")
 
             # Объединяем результаты
-            preferences = {"authors": {}, "categories": {}, "tags": {}}
+            preferences = {"authors": {}, "categories": {}, "tags": {}, "rated_books": rated_books}
 
             # Обрабатываем результаты оценок
-            for row in ratings_result:
+            for row in ratings_data:
                 if row.author_id:
                     preferences["authors"][row.author_id] = {
                         "name": row.author_name,
@@ -536,7 +595,7 @@ class RecommendationService:
                     }
 
             # Добавляем лайки
-            for row in likes_result:
+            for row in likes_data:
                 if row.author_id:
                     if row.author_id in preferences["authors"]:
                         preferences["authors"][row.author_id]["weight"] += 1
@@ -554,7 +613,7 @@ class RecommendationService:
                         preferences["tags"][row.tag_id] = {"name": row.tag_name, "weight": 1}
 
             # Добавляем избранное
-            for row in favorites_result:
+            for row in favorites_data:
                 if row.author_id:
                     if row.author_id in preferences["authors"]:
                         preferences["authors"][row.author_id]["weight"] += 2  # Избранное имеет больший вес
@@ -571,11 +630,12 @@ class RecommendationService:
                     else:
                         preferences["tags"][row.tag_id] = {"name": row.tag_name, "weight": 2}
 
+            logger.info(f"Успешно получены предпочтения для пользователя {user_id}")
             return preferences
 
         except Exception as e:
             logger.error(f"Ошибка при получении предпочтений пользователя: {str(e)}", exc_info=True)
-            return {"authors": {}, "categories": {}, "tags": {}}
+            raise
 
     async def _get_content_recommendations(
         self,
@@ -591,6 +651,8 @@ class RecommendationService:
         Получить рекомендации на основе предпочтений пользователя.
         """
         try:
+            logger.info(f"Начинаем получение контентных рекомендаций для пользователя {user_id}")
+
             # Получаем предпочтения пользователя
             preferences = await self._get_user_preferences(user_id)
 
@@ -611,77 +673,108 @@ class RecommendationService:
                     JOIN books b ON r.book_id = b.id
                     LEFT JOIN book_authors ba ON b.id = ba.book_id
                     LEFT JOIN authors a ON ba.author_id = a.id
-                    LEFT JOIN book_categories bc ON b.id = bc.book_id
+                    LEFT JOIN books_categories bc ON b.id = bc.book_id
                     LEFT JOIN categories c ON bc.category_id = c.id
-                    LEFT JOIN book_tags bt ON b.id = bt.book_id
+                    LEFT JOIN books_tags bt ON b.id = bt.book_id
                     LEFT JOIN tags t ON bt.tag_id = t.id
                     WHERE r.user_id = :user_id
                     GROUP BY a.id, c.id, t.id
+                ),
+                book_scores AS (
+                    SELECT
+                        b.id,
+                        b.title,
+                        b.year,
+                        COALESCE(AVG(r.rating), 0) as rating,
+                        STRING_AGG(DISTINCT a.name, ', ') as author,
+                        STRING_AGG(DISTINCT c.name_categories, ', ') as category,
+                        SUM(
+                            CASE
+                                WHEN ba.author_id IN (SELECT author_id FROM user_preferences) THEN 1
+                                ELSE 0
+                            END +
+                            CASE
+                                WHEN bc.category_id IN (SELECT category_id FROM user_preferences) THEN 1
+                                ELSE 0
+                            END +
+                            CASE
+                                WHEN bt.tag_id IN (SELECT tag_id FROM user_preferences) THEN 1
+                                ELSE 0
+                            END
+                        ) as match_score
+                    FROM books b
+                    LEFT JOIN ratings r ON b.id = r.book_id
+                    LEFT JOIN book_authors ba ON b.id = ba.book_id
+                    LEFT JOIN authors a ON ba.author_id = a.id
+                    LEFT JOIN books_categories bc ON b.id = bc.book_id
+                    LEFT JOIN categories c ON bc.category_id = c.id
+                    LEFT JOIN books_tags bt ON b.id = bt.book_id
+                    WHERE b.id NOT IN (
+                        SELECT book_id FROM ratings WHERE user_id = :user_id
+                    )
+                    AND (COALESCE(:min_year, 0) = 0 OR CAST(b.year AS INTEGER) >= :min_year)
+                    AND (COALESCE(:max_year, 9999) = 9999 OR CAST(b.year AS INTEGER) <= :max_year)
+                    GROUP BY b.id, b.title, b.year
                 )
-                SELECT DISTINCT b.*
-                FROM books b
-                LEFT JOIN book_authors ba ON b.id = ba.book_id
-                LEFT JOIN book_categories bc ON b.id = bc.book_id
-                LEFT JOIN book_tags bt ON b.id = bt.book_id
-                WHERE (
-                    ba.author_id IN (SELECT author_id FROM user_preferences)
-                    OR bc.category_id IN (SELECT category_id FROM user_preferences)
-                    OR bt.tag_id IN (SELECT tag_id FROM user_preferences)
-                )
-                AND b.id NOT IN (
-                    SELECT book_id FROM ratings WHERE user_id = :user_id
-                )
-                AND (:min_year IS NULL OR b.year >= :min_year)
-                AND (:max_year IS NULL OR b.year <= :max_year)
-                AND (
-                    SELECT COUNT(*)
-                    FROM ratings r
-                    WHERE r.book_id = b.id
-                ) >= :min_ratings_count
-                ORDER BY (
-                    CASE
-                        WHEN ba.author_id IN (SELECT author_id FROM user_preferences) THEN 1
-                        ELSE 0
-                    END +
-                    CASE
-                        WHEN bc.category_id IN (SELECT category_id FROM user_preferences) THEN 1
-                        ELSE 0
-                    END +
-                    CASE
-                        WHEN bt.tag_id IN (SELECT tag_id FROM user_preferences) THEN 1
-                        ELSE 0
-                    END
-                ) DESC
+                SELECT *
+                FROM book_scores
+                WHERE match_score > 0
+                ORDER BY match_score DESC
                 LIMIT :limit
             """
             )
 
+            logger.info("Выполняем запрос для получения контентных рекомендаций")
             result = await self.db.execute(
                 query,
                 {
                     "user_id": user_id,
-                    "min_year": min_year,
-                    "max_year": max_year,
+                    "min_year": min_year or 0,
+                    "max_year": max_year or 9999,
                     "min_ratings_count": min_ratings_count,
-                    "limit": 50,
+                    "limit": limit,
                 },
             )
             books = result.fetchall()
-
             logger.info(f"Найдено {len(books)} книг на основе контентной фильтрации")
-            return [BookRecommendation(**book) for book in books]
+
+            recommendations = []
+            for book in books:
+                try:
+                    recommendation = BookRecommendation(
+                        id=book.id,
+                        title=book.title,
+                        author=book.author or "Неизвестный автор",
+                        category=book.category or "Без категории",
+                        rating=book.rating,
+                        score=book.match_score,
+                        reason=await self._get_recommendation_reason(book, preferences),
+                        recommendation_type=RecommendationType.CONTENT,
+                    )
+                    recommendations.append(recommendation)
+                except Exception as e:
+                    logger.error(f"Ошибка при создании рекомендации для книги {book.id}: {str(e)}", exc_info=True)
+
+            return recommendations
 
         except Exception as e:
             logger.error(f"Ошибка при получении контентных рекомендаций: {str(e)}", exc_info=True)
             return []
 
     async def _get_collaborative_recommendations(
-        self, user_id: int, min_rating: float, min_year: Optional[int], max_year: Optional[int], min_ratings_count: int
+        self,
+        user_id: int,
+        limit: int,
+        min_rating: float,
+        min_year: Optional[int],
+        max_year: Optional[int],
+        min_ratings_count: int,
     ) -> List[BookRecommendation]:
         """
         Получить рекомендации на основе оценок похожих пользователей.
         """
         try:
+            logger.info(f"Начинаем получение коллаборативных рекомендаций для пользователя {user_id}")
             query = text(
                 """
                 WITH similar_users AS (
@@ -694,51 +787,63 @@ class RecommendationService:
                     WHERE r1.user_id = :user_id
                     AND r2.user_id != :user_id
                     GROUP BY r2.user_id
-                    HAVING COUNT(*) >= 3
+                    HAVING COUNT(*) >= 1  -- Минимальное количество общих оценок
                     ORDER BY rating_diff ASC
                     LIMIT 10
-                )
-                SELECT DISTINCT b.*
-                FROM books b
-                JOIN ratings r ON b.id = r.book_id
-                WHERE r.user_id IN (SELECT user_id FROM similar_users)
-                AND r.rating >= :min_rating
-                AND b.id NOT IN (
-                    SELECT book_id FROM ratings WHERE user_id = :user_id
-                )
-                AND (:min_year IS NULL OR b.year >= :min_year)
-                AND (:max_year IS NULL OR b.year <= :max_year)
-                AND (
-                    SELECT COUNT(*)
-                    FROM ratings r
-                    WHERE r.book_id = b.id
-                    AND r.user_id IN (SELECT user_id FROM similar_users)
-                ) >= :min_ratings_count
-                ORDER BY (
-                    SELECT AVG(r2.rating)
-                    FROM ratings r2
-                    WHERE r2.book_id = b.id
+                ),
+                book_ratings AS (
+                    SELECT
+                        b.*,
+                        AVG(r2.rating) as avg_rating
+                    FROM books b
+                    JOIN ratings r ON b.id = r.book_id
+                    JOIN ratings r2 ON b.id = r2.book_id
+                    WHERE r.user_id IN (SELECT user_id FROM similar_users)
                     AND r2.user_id IN (SELECT user_id FROM similar_users)
-                ) DESC
+                    AND r.rating >= :min_rating
+                    AND b.id NOT IN (
+                        SELECT book_id FROM ratings WHERE user_id = :user_id
+                    )
+                    GROUP BY b.id
+                    HAVING COUNT(DISTINCT r2.user_id) >= 1  -- Минимальное количество оценок
+                )
+                SELECT DISTINCT *
+                FROM book_ratings
+                ORDER BY avg_rating DESC
                 LIMIT :limit
             """
             )
 
+            logger.info("Выполняем запрос для получения коллаборативных рекомендаций")
             result = await self.db.execute(
                 query,
                 {
                     "user_id": user_id,
                     "min_rating": min_rating,
-                    "min_year": min_year,
-                    "max_year": max_year,
                     "min_ratings_count": min_ratings_count,
-                    "limit": 50,
+                    "limit": limit,
                 },
             )
             books = result.fetchall()
-
             logger.info(f"Найдено {len(books)} книг на основе коллаборативной фильтрации")
-            return [BookRecommendation(**book) for book in books]
+
+            recommendations = []
+            for book in books:
+                try:
+                    recommendation = BookRecommendation(
+                        id=book.id,
+                        title=book.title,
+                        author=book.author,
+                        category=book.category,
+                        rating=book.rating,
+                        score=book.avg_rating,
+                        reason="Похожие пользователи высоко оценили эту книгу",
+                    )
+                    recommendations.append(recommendation)
+                except Exception as e:
+                    logger.error(f"Ошибка при создании рекомендации для книги {book.id}: {str(e)}", exc_info=True)
+
+            return recommendations
 
         except Exception as e:
             logger.error(f"Ошибка при получении коллаборативных рекомендаций: {str(e)}", exc_info=True)
@@ -757,47 +862,73 @@ class RecommendationService:
         Получить рекомендации на основе популярности книг.
         """
         try:
+            logger.info(f"Начинаем получение популярных рекомендаций для пользователя {user_id}")
             query = text(
                 """
-                SELECT b.*
-                FROM books b
-                JOIN ratings r ON b.id = r.book_id
-                WHERE r.user_id = :user_id
-                AND r.rating >= :min_rating
-                AND b.id NOT IN (
+                WITH book_ratings AS (
+                    SELECT
+                        b.id,
+                        b.title,
+                        b.year,
+                        COALESCE(AVG(r.rating), 0) as rating,
+                        STRING_AGG(DISTINCT a.name, ', ') as author,
+                        STRING_AGG(DISTINCT c.name_categories, ', ') as category,
+                        COUNT(*) as rating_count
+                    FROM books b
+                    JOIN ratings r ON b.id = r.book_id
+                    LEFT JOIN book_authors ba ON b.id = ba.book_id
+                    LEFT JOIN authors a ON ba.author_id = a.id
+                    LEFT JOIN books_categories bc ON b.id = bc.book_id
+                    LEFT JOIN categories c ON bc.category_id = c.id
+                    WHERE r.rating >= :min_rating
+                    GROUP BY b.id, b.title, b.year
+                    HAVING COUNT(*) >= 1
+                )
+                SELECT *
+                FROM book_ratings
+                WHERE id NOT IN (
                     SELECT book_id FROM ratings WHERE user_id = :user_id
                 )
-                AND (:min_year IS NULL OR b.year >= :min_year)
-                AND (:max_year IS NULL OR b.year <= :max_year)
-                AND (
-                    SELECT COUNT(*)
-                    FROM ratings r
-                    WHERE r.book_id = b.id
-                ) >= :min_ratings_count
-                ORDER BY (
-                    SELECT COUNT(*)
-                    FROM ratings r
-                    WHERE r.book_id = b.id
-                ) DESC
+                AND (COALESCE(:min_year, 0) = 0 OR CAST(year AS INTEGER) >= :min_year)
+                AND (COALESCE(:max_year, 9999) = 9999 OR CAST(year AS INTEGER) <= :max_year)
+                ORDER BY rating_count DESC
                 LIMIT :limit
             """
             )
 
+            logger.info("Выполняем запрос для получения популярных рекомендаций")
             result = await self.db.execute(
                 query,
                 {
                     "user_id": user_id,
                     "min_rating": min_rating,
-                    "min_year": min_year,
-                    "max_year": max_year,
+                    "min_year": min_year or 0,
+                    "max_year": max_year or 9999,
                     "min_ratings_count": min_ratings_count,
                     "limit": limit,
                 },
             )
             books = result.fetchall()
-
             logger.info(f"Найдено {len(books)} книг на основе популярности")
-            return [BookRecommendation(**book) for book in books]
+
+            recommendations = []
+            for book in books:
+                try:
+                    recommendation = BookRecommendation(
+                        id=book.id,
+                        title=book.title,
+                        author=book.author or "Неизвестный автор",
+                        category=book.category or "Без категории",
+                        rating=book.rating,
+                        score=book.rating_count,
+                        reason="Популярная книга среди пользователей",
+                        recommendation_type=RecommendationType.POPULARITY,
+                    )
+                    recommendations.append(recommendation)
+                except Exception as e:
+                    logger.error(f"Ошибка при создании рекомендации для книги {book.id}: {str(e)}", exc_info=True)
+
+            return recommendations
 
         except Exception as e:
             logger.error(f"Ошибка при получении популярных рекомендаций: {str(e)}", exc_info=True)
@@ -979,7 +1110,6 @@ class RecommendationService:
 
         try:
             # Преобразуем данные в JSON-совместимый формат с помощью jsonable_encoder
-            # и обрезаем результат, чтобы избежать ошибки с Content-Length
             json_data = jsonable_encoder(data)
 
             # Ограничиваем размер кэшируемых данных
@@ -990,9 +1120,16 @@ class RecommendationService:
             # Сериализуем в JSON
             cached_value = json.dumps(json_data)
 
+            # Проверяем размер данных перед кэшированием
+            if len(cached_value) > 1024 * 1024:  # 1MB limit
+                logger.warning(f"Cache data too large ({len(cached_value)} bytes), skipping cache")
+                return
+
             # Сохраняем в Redis
             self.redis_client.setex(key, expire_seconds, cached_value)
             logger.debug(f"Cached result with key: {key}, expires in {expire_seconds}s")
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON serialization error while caching: {str(e)}")
         except Exception as e:
             logger.error(f"Error caching result: {str(e)}")
             # В случае ошибки просто продолжаем работу без кэширования
@@ -1001,10 +1138,10 @@ class RecommendationService:
         """
         Получает результат из кэша.
 
-        Аргументы:
+        Args:
             key: Ключ кэша
 
-        Возвращает:
+        Returns:
             Десериализованные данные или None, если кэш не найден
         """
         if not self.redis_client:
@@ -1013,7 +1150,11 @@ class RecommendationService:
         try:
             cached = self.redis_client.get(key)
             if cached:
-                return json.loads(cached)
+                try:
+                    return json.loads(cached)
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON deserialization error for cached data: {str(e)}")
+                    return None
             return None
         except Exception as e:
             logger.error(f"Error retrieving cached result with key {key}: {str(e)}")

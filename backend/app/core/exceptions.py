@@ -171,3 +171,139 @@ class DatabaseException(BookPortalException):
     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     error_code = "database_error"
     message = "Ошибка базы данных"
+
+
+# Ошибки, связанные с рейтингами
+class RatingNotFoundException(BookPortalException):
+    """Рейтинг не найден"""
+
+    status_code = status.HTTP_404_NOT_FOUND
+    error_code = "rating_not_found"
+    message = "Рейтинг не найден"
+
+
+class InvalidRatingValueException(BookPortalException):
+    """Некорректное значение рейтинга"""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    error_code = "invalid_rating_value"
+    message = "Значение рейтинга должно быть от 1 до 5"
+
+
+# Ошибки, связанные с лайками
+class LikeNotFoundException(BookPortalException):
+    """Лайк не найден"""
+
+    status_code = status.HTTP_404_NOT_FOUND
+    error_code = "like_not_found"
+    message = "Лайк не найден"
+
+
+class LikeAlreadyExistsException(BookPortalException):
+    """Лайк уже существует"""
+
+    status_code = status.HTTP_409_CONFLICT
+    error_code = "like_already_exists"
+    message = "Лайк уже существует"
+
+
+# Ошибки, связанные с избранным
+class FavoriteNotFoundException(BookPortalException):
+    """Избранное не найдено"""
+
+    status_code = status.HTTP_404_NOT_FOUND
+    error_code = "favorite_not_found"
+    message = "Избранное не найдено"
+
+
+class FavoriteAlreadyExistsException(BookPortalException):
+    """Избранное уже существует"""
+
+    status_code = status.HTTP_409_CONFLICT
+    error_code = "favorite_already_exists"
+    message = "Избранное уже существует"
+
+
+# Ошибки, связанные с поиском
+class SearchException(BookPortalException):
+    """Ошибка поиска"""
+
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    error_code = "search_error"
+    message = "Ошибка при выполнении поиска"
+
+
+class InvalidSearchQueryException(BookPortalException):
+    """Некорректный поисковый запрос"""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    error_code = "invalid_search_query"
+    message = "Некорректный поисковый запрос"
+
+
+# Ошибки, связанные с рекомендациями
+class RecommendationException(BookPortalException):
+    """Ошибка рекомендаций"""
+
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    error_code = "recommendation_error"
+    message = "Ошибка при формировании рекомендаций"
+
+
+class NotEnoughDataForRecommendationException(BookPortalException):
+    """Недостаточно данных для рекомендаций"""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    error_code = "not_enough_data"
+    message = "Недостаточно данных для формирования рекомендаций"
+
+
+# Ошибки, связанные с файлами
+class FileUploadException(BookPortalException):
+    """Ошибка загрузки файла"""
+
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    error_code = "file_upload_error"
+    message = "Ошибка при загрузке файла"
+
+
+class InvalidFileTypeException(BookPortalException):
+    """Неподдерживаемый тип файла"""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    error_code = "invalid_file_type"
+    message = "Неподдерживаемый тип файла"
+
+
+class FileSizeExceededException(BookPortalException):
+    """Превышен размер файла"""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    error_code = "file_size_exceeded"
+    message = "Превышен максимально допустимый размер файла"
+
+
+# Ошибки, связанные с кэшированием
+class CacheException(BookPortalException):
+    """Ошибка кэширования"""
+
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    error_code = "cache_error"
+    message = "Ошибка при работе с кэшем"
+
+
+# Ошибки, связанные с внешними API
+class ExternalAPIException(BookPortalException):
+    """Ошибка внешнего API"""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    error_code = "external_api_error"
+    message = "Ошибка при обращении к внешнему API"
+
+
+class ExternalAPITimeoutException(BookPortalException):
+    """Таймаут внешнего API"""
+
+    status_code = status.HTTP_504_GATEWAY_TIMEOUT
+    error_code = "external_api_timeout"
+    message = "Превышено время ожидания ответа от внешнего API"

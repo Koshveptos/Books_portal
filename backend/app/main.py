@@ -1,27 +1,31 @@
+import logging
 import os
-
-# Добавляем путь к приложению в sys.path для абсолютных импортов
 import sys
 import time
 from contextlib import asynccontextmanager
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import uvicorn
-
-# Исправлен импорт - в директории core файл конфигурации называется config, а не settings
-from core.config import settings
-from core.exceptions import BookPortalException
-from core.logger_config import logger
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# Правильные импорты из 'routers' вместо 'routes'
+# Добавляем путь к приложению в sys.path для абсолютных импортов
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from core.config import settings
+from core.exceptions import BookPortalException
+from core.logger_config import (
+    log_business_error,
+    log_critical_error,
+    log_validation_error,
+    log_warning,
+)
+
+# Импорты роутеров
 from routers.auth import router as auth_router
 from routers.authors import router as authors_router
-from routers.books import books_router as flat_books_router  # Импортируем плоский роутер для книг
+from routers.books import books_router as flat_books_router
 from routers.books import router as books_router
 from routers.categories import router as categories_router
 from routers.favorites import router as favorites_router
@@ -32,9 +36,9 @@ from routers.search import router as search_router
 from routers.tags import router as tags_router
 from routers.user import router as users_router
 
-# from starlette.requests import Request
-
-# потом все подключения роутеров в один файл перекинуть и там настроить все
+# Настройка логгера
+logger = logging.getLogger("books_portal")
+logger.setLevel(logging.INFO)
 
 
 @asynccontextmanager
@@ -119,12 +123,19 @@ async def log_requests(request: Request, call_next):
 # Обработчик наших пользовательских исключений
 @app.exception_handler(BookPortalException)
 async def book_portal_exception_handler(request: Request, exc: BookPortalException):
-    logger.warning(
-        f"BookPortalException: {exc.error_code} - {exc.message} - " f"URL: {request.method} {request.url.path}"
+    """Обработчик исключений приложения"""
+    log_business_error(
+        error=exc,
+        operation=request.url.path,
+        context={
+            "method": request.method,
+            "url": str(request.url),
+            "client": request.client.host if request.client else "Unknown",
+        },
     )
     return JSONResponse(
         status_code=exc.status_code,
-        content=exc.to_dict(),
+        content={"detail": exc.message},
     )
 
 
@@ -135,26 +146,115 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     error_messages = []
 
     for error in errors:
-        error_messages.append({"loc": error.get("loc", []), "msg": error.get("msg", ""), "type": error.get("type", "")})
+        error_messages.append(
+            {
+                "loc": error.get("loc", []),
+                "msg": error.get("msg", ""),
+                "type": error.get("type", ""),
+                "input": error.get("input", None),
+            }
+        )
 
-    logger.warning(f"Validation error for {request.method} {request.url.path}: {errors}")
+    log_validation_error(
+        exc,
+        model_name=request.url.path.split("/")[-1],
+        field=error_messages[0].get("loc", [])[-1] if error_messages else None,
+    )
 
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"error_code": "validation_error", "message": "Ошибка валидации данных", "details": error_messages},
+        content={
+            "error_code": "validation_error",
+            "message": "Ошибка валидации данных",
+            "details": error_messages,
+            "path": request.url.path,
+            "timestamp": time.time(),
+        },
+    )
+
+
+# Обработчик ошибок 404 Not Found
+@app.exception_handler(status.HTTP_404_NOT_FOUND)
+async def not_found_exception_handler(request: Request, exc: Exception):
+    log_warning(
+        f"Resource not found: {request.method} {request.url.path}",
+        context={
+            "client": request.client.host if request.client else "Unknown",
+            "user_agent": request.headers.get("user-agent", "Unknown"),
+            "query_params": dict(request.query_params),
+        },
+    )
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={
+            "error_code": "not_found",
+            "message": "Запрашиваемый ресурс не найден",
+            "path": request.url.path,
+            "timestamp": time.time(),
+        },
+    )
+
+
+# Обработчик ошибок 405 Method Not Allowed
+@app.exception_handler(status.HTTP_405_METHOD_NOT_ALLOWED)
+async def method_not_allowed_exception_handler(request: Request, exc: Exception):
+    log_warning(
+        f"Method not allowed: {request.method} {request.url.path}",
+        context={
+            "client": request.client.host if request.client else "Unknown",
+            "user_agent": request.headers.get("user-agent", "Unknown"),
+            "query_params": dict(request.query_params),
+        },
+    )
+    return JSONResponse(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        content={
+            "error_code": "method_not_allowed",
+            "message": "Метод не разрешен",
+            "path": request.url.path,
+            "timestamp": time.time(),
+        },
+    )
+
+
+# Обработчик ошибок 429 Too Many Requests
+@app.exception_handler(status.HTTP_429_TOO_MANY_REQUESTS)
+async def too_many_requests_exception_handler(request: Request, exc: Exception):
+    log_warning(
+        f"Too many requests: {request.method} {request.url.path}",
+        context={
+            "client": request.client.host if request.client else "Unknown",
+            "user_agent": request.headers.get("user-agent", "Unknown"),
+            "query_params": dict(request.query_params),
+        },
+    )
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={
+            "error_code": "too_many_requests",
+            "message": "Слишком много запросов",
+            "path": request.url.path,
+            "timestamp": time.time(),
+        },
     )
 
 
 # Общий обработчик непредвиденных ошибок (500)
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    logger.exception(
-        f"Unhandled exception for {request.method} {request.url.path}. "
-        f"Headers: {request.headers}, Query: {request.query_params}"
+    """Обработчик необработанных исключений"""
+    log_critical_error(
+        error=exc,
+        component="application",
+        context={
+            "method": request.method,
+            "url": str(request.url),
+            "client": request.client.host if request.client else "Unknown",
+        },
     )
     return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"error_code": "internal_error", "message": "Внутренняя ошибка сервера"},
+        status_code=500,
+        content={"detail": "Внутренняя ошибка сервера"},
     )
 
 

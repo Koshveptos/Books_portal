@@ -2,12 +2,23 @@ from typing import List, Optional
 
 from auth import current_active_user
 from core.database import get_db
-from core.logger_config import logger
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from core.exceptions import (
+    BookNotFoundException,
+    DatabaseException,
+    InvalidRatingValueException,
+    RatingNotFoundException,
+)
+from core.logger_config import (
+    log_db_error,
+    log_info,
+    log_warning,
+)
+from fastapi import APIRouter, Depends, Query, status
 from models.book import Book, Rating
 from models.user import User
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/ratings", tags=["ratings"])
@@ -43,14 +54,16 @@ async def rate_book(
     Если пользователь уже оценивал эту книгу, его оценка обновляется.
     """
     try:
+        log_info(f"User {current_user.id} attempting to rate book {book_id}")
+
         # Проверяем, существует ли книга
         book_query = select(Book).where(Book.id == book_id)
         result = await db.execute(book_query)
         book = result.scalar_one_or_none()
 
         if not book:
-            logger.warning(f"Попытка оценить несуществующую книгу: id={book_id}, пользователь id={current_user.id}")
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Книга не найдена")
+            log_warning(f"Attempt to rate non-existent book: id={book_id}, user id={current_user.id}")
+            raise BookNotFoundException(message=f"Книга с ID {book_id} не найдена")
 
         # Проверяем, оценивал ли пользователь эту книгу раньше
         existing_rating_query = select(Rating).where((Rating.user_id == current_user.id) & (Rating.book_id == book_id))
@@ -64,9 +77,9 @@ async def rate_book(
             await db.commit()
             await db.refresh(existing_rating)
 
-            logger.info(
-                f"Пользователь {current_user.id} обновил оценку для книги {book_id}: "
-                f"с {existing_rating.rating} на {rating_data.rating}"
+            log_info(
+                f"User {current_user.id} updated rating for book {book_id}: "
+                f"from {existing_rating.rating} to {rating_data.rating}"
             )
 
             return existing_rating
@@ -80,16 +93,20 @@ async def rate_book(
             await db.commit()
             await db.refresh(new_rating)
 
-            logger.info(f"Пользователь {current_user.id} оценил книгу {book_id} на {rating_data.rating}")
+            log_info(f"User {current_user.id} rated book {book_id} with {rating_data.rating}")
 
             return new_rating
 
-    except HTTPException:
+    except (BookNotFoundException, InvalidRatingValueException):
         raise
+    except IntegrityError as e:
+        await db.rollback()
+        log_db_error(e, operation="rate_book", table="ratings", book_id=book_id, user_id=current_user.id)
+        raise InvalidRatingValueException("Ошибка при создании оценки")
     except Exception as e:
         await db.rollback()
-        logger.error(f"Ошибка при создании оценки: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Внутренняя ошибка сервера")
+        log_db_error(e, operation="rate_book", table="ratings", book_id=book_id, user_id=current_user.id)
+        raise DatabaseException("Ошибка при создании оценки")
 
 
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -104,30 +121,30 @@ async def delete_rating(
     Этот эндпоинт позволяет пользователю удалить свою оценку книги.
     """
     try:
+        log_info(f"User {current_user.id} attempting to delete rating for book {book_id}")
+
         # Находим оценку пользователя для этой книги
         rating_query = select(Rating).where((Rating.user_id == current_user.id) & (Rating.book_id == book_id))
         result = await db.execute(rating_query)
         rating = result.scalar_one_or_none()
 
         if not rating:
-            logger.warning(f"Пользователь {current_user.id} пытается удалить несуществующую оценку для книги {book_id}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Оценка не найдена. Возможно, вы не оценивали эту книгу."
-            )
+            log_warning(f"User {current_user.id} attempting to delete non-existent rating for book {book_id}")
+            raise RatingNotFoundException(message="Оценка не найдена. Возможно, вы не оценивали эту книгу.")
 
         await db.delete(rating)
         await db.commit()
 
-        logger.info(f"Пользователь {current_user.id} удалил оценку для книги {book_id}")
+        log_info(f"User {current_user.id} deleted rating for book {book_id}")
 
         return None
 
-    except HTTPException:
+    except RatingNotFoundException:
         raise
     except Exception as e:
         await db.rollback()
-        logger.error(f"Ошибка при удалении оценки: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Внутренняя ошибка сервера")
+        log_db_error(e, operation="delete_rating", table="ratings", book_id=book_id, user_id=current_user.id)
+        raise DatabaseException("Ошибка при удалении оценки")
 
 
 @router.get("/", response_model=List[RatingResponse])
@@ -143,15 +160,19 @@ async def get_user_ratings(
     Возвращает все оценки, которые пользователь поставил книгам.
     """
     try:
+        log_info(f"Getting ratings for user {current_user.id}")
+
         # Базовый запрос для получения оценок пользователя
         query = select(Rating).where(Rating.user_id == current_user.id)
 
         # Добавляем фильтры, если они указаны
         if min_rating is not None:
             query = query.where(Rating.rating >= min_rating)
+            log_info(f"Filtering by minimum rating: {min_rating}")
 
         if max_rating is not None:
             query = query.where(Rating.rating <= max_rating)
+            log_info(f"Filtering by maximum rating: {max_rating}")
 
         # Сортируем по дате создания (по убыванию)
         query = query.order_by(Rating.created_at.desc())
@@ -159,10 +180,10 @@ async def get_user_ratings(
         result = await db.execute(query)
         ratings = result.scalars().all()
 
-        logger.info(f"Получено {len(ratings)} оценок пользователя {current_user.id}")
+        log_info(f"Found {len(ratings)} ratings for user {current_user.id}")
 
         return ratings
 
     except Exception as e:
-        logger.error(f"Ошибка при получении оценок: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Внутренняя ошибка сервера")
+        log_db_error(e, operation="get_user_ratings", table="ratings", user_id=current_user.id)
+        raise DatabaseException("Ошибка при получении списка оценок")
