@@ -2,94 +2,80 @@
 Простой тест авторизации через JWT
 """
 
-import asyncio
-import getpass
 import json
-import sys
 
 import httpx
+import pytest
 
 
-async def test_login(email=None, password=None):
+@pytest.mark.asyncio
+async def test_login(async_client: httpx.AsyncClient, test_admin):
     """
-    Тест авторизации через JWT с возможностью ввода пароля
+    Тест авторизации через JWT с использованием тестового администратора
     """
-    if not email:
-        email = input("Введите email: ")
+    email = test_admin.email
+    password = test_admin.plain_password
 
-    if not password:
-        password = getpass.getpass("Введите пароль: ")
+    # Авторизация
+    login_data = {"username": email, "password": password}
 
-    async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
-        # Авторизация
-        login_data = {"username": email, "password": password}
+    print(f"Попытка авторизации для: {email}")
 
-        print(f"Попытка авторизации для: {email}")
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    response = await async_client.post("/auth/jwt/login", data=login_data, headers=headers)
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-        response = await client.post("/auth/jwt/login", data=login_data, headers=headers)
+    print(f"Код ответа: {response.status_code}")
+    print(f"Тело ответа: {response.text}")
 
-        print(f"Код ответа: {response.status_code}")
-        print(f"Тело ответа: {response.text}")
+    assert response.status_code == 200, "Ошибка авторизации"
+    data = response.json()
+    token = data.get("access_token")
+    token_type = data.get("token_type", "bearer")
 
-        if response.status_code == 200:
-            data = response.json()
-            token = data.get("access_token")
-            token_type = data.get("token_type", "bearer")
+    print(f"Токен получен: {token[:20]}..." if token else "Токен не получен")
+    print(f"Тип токена: {token_type}")
 
-            print(f"Токен получен: {token[:20]}..." if token else "Токен не получен")
-            print(f"Тип токена: {token_type}")
+    # Проверка пользователя с полученным токеном
+    auth_header = {"Authorization": f"Bearer {token}"}
+    print(f"Заголовок авторизации: {auth_header}")
 
-            # Проверка пользователя с полученным токеном
-            # ВАЖНО: формат должен быть строго "Bearer токен" с пробелом между типом и токеном
-            auth_header = {"Authorization": f"Bearer {token}"}
-            print(f"Заголовок авторизации: {auth_header}")
+    # Проверка эндпоинта Me
+    print("\nПроверка /users/me...")
+    me_response = await async_client.get("/users/{user_id}/status", headers=auth_header)
 
-            # Проверка эндпоинта Me
-            print("\nПроверка /users/me...")
-            me_response = await client.get("/users/me", headers=auth_header)
+    print(f"Код ответа: {me_response.status_code}")
+    print(f"Данные пользователя: {me_response.text}")
+    assert me_response.status_code == 200, "Ошибка получения данных пользователя"
 
-            print(f"Код ответа: {me_response.status_code}")
-            print(f"Данные пользователя: {me_response.text}")
+    # Проверка эндпоинта status
+    print("\nПроверка /auth/status...")
+    status_response = await async_client.get("/auth/status", headers=auth_header)
 
-            # Проверка эндпоинта status
-            print("\nПроверка /auth/status...")
-            status_response = await client.get("/auth/status", headers=auth_header)
+    print(f"Код ответа: {status_response.status_code}")
+    print(f"Данные статуса: {status_response.text}")
+    assert status_response.status_code == 200, "Ошибка проверки статуса"
+    assert "authenticated" in status_response.text, "Пользователь не аутентифицирован"
 
-            print(f"Код ответа: {status_response.status_code}")
-            print(f"Данные статуса: {status_response.text}")
+    # Проверка создания книги
+    book_data = {
+        "title": "Тестовая книга",
+        "description": "Тест JWT авторизации",
+        "author_name": "Тестовый Автор",
+        "year": 2025,
+        "language": "ru",
+        "isbn": "978-3-16-148410-0",
+        "categories": [],
+        "tags": [],
+    }
 
-            # Если проверка статуса успешна, попробуем создать книгу
-            if status_response.status_code == 200 and "authenticated" in status_response.text:
-                # Проверка создания книги
-                book_data = {
-                    "title": "Тестовая книга",
-                    "description": "Тест JWT авторизации",
-                    "author_name": "Тестовый Автор",
-                    "year": 2025,
-                    "language": "ru",
-                    "isbn": "978-3-16-148410-0",
-                    "categories": [],
-                    "tags": [],
-                }
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
 
-                headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+    print("\nСоздание тестовой книги...")
+    print(f"Заголовки: {headers}")
+    print(f"Данные книги: {json.dumps(book_data, ensure_ascii=False)}")
 
-                print("\nСоздание тестовой книги...")
-                print(f"Заголовки: {headers}")
-                print(f"Данные книги: {json.dumps(book_data, ensure_ascii=False)}")
+    book_response = await async_client.post("/books/books/", json=book_data, headers=headers)
 
-                book_response = await client.post("/books/books/", json=book_data, headers=headers)
-
-                print(f"Код ответа: {book_response.status_code}")
-                print(f"Тело ответа: {book_response.text}")
-        else:
-            print("Авторизация не удалась")
-
-
-if __name__ == "__main__":
-    # Если передали пользователя и пароль в аргументах - используем их
-    email = sys.argv[1] if len(sys.argv) > 1 else None
-    password = sys.argv[2] if len(sys.argv) > 2 else None
-
-    asyncio.run(test_login(email, password))
+    print(f"Код ответа: {book_response.status_code}")
+    print(f"Тело ответа: {book_response.text}")
+    assert book_response.status_code == 201, "Ошибка создания книги"

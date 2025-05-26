@@ -1,13 +1,14 @@
 from typing import AsyncGenerator
 
 from auth import current_active_user
-from core.config import settings
-from core.database import AsyncSessionLocal
-from core.logger_config import logger
 from fastapi import Depends, HTTPException, status
 from models.user import User
 from redis import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.database import AsyncSessionLocal
+from app.core.logger_config import logger
 
 # Переиспользуем функцию current_active_user из auth модуля
 get_current_active_user = current_active_user

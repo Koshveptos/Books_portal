@@ -8,9 +8,10 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from core.database import async_session_maker
 from models.user import User
 from sqlalchemy import select
+
+from app.core.database import async_session_maker
 
 
 async def list_users():

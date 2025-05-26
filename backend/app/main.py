@@ -13,15 +13,6 @@ from fastapi.responses import JSONResponse
 # Добавляем путь к приложению в sys.path для абсолютных импортов
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core.config import settings
-from core.exceptions import BookPortalException
-from core.logger_config import (
-    log_business_error,
-    log_critical_error,
-    log_validation_error,
-    log_warning,
-)
-
 # Импорты роутеров
 from routers.auth import router as auth_router
 from routers.authors import router as authors_router
@@ -35,6 +26,15 @@ from routers.recommendations import router as recommendations_router
 from routers.search import router as search_router
 from routers.tags import router as tags_router
 from routers.user import router as users_router
+
+from app.core.config import settings
+from app.core.exceptions import BookPortalException
+from app.core.logger_config import (
+    log_business_error,
+    log_critical_error,
+    log_validation_error,
+    log_warning,
+)
 
 # Настройка логгера
 logger = logging.getLogger("books_portal")
@@ -68,13 +68,13 @@ app.add_middleware(
 )
 
 # Настраиваем и включаем все роутеры с правильными тегами
+app.include_router(auth_router)  # Подключаем auth_router первым
+app.include_router(users_router)  # Убираем prefix="/users", так как он уже есть в роутере
 app.include_router(books_router, prefix="/books", tags=["books"])
-app.include_router(flat_books_router, prefix="/books", tags=["flat_books"])  # Добавляем плоский роутер
+app.include_router(flat_books_router, prefix="/books", tags=["flat_books"])
 app.include_router(authors_router, prefix="/authors", tags=["authors"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])
 app.include_router(tags_router, prefix="/tags", tags=["tags"])
-app.include_router(users_router, prefix="/users", tags=["users"])
-app.include_router(auth_router)
 app.include_router(search_router, prefix="/search", tags=["search"])
 app.include_router(recommendations_router)
 app.include_router(likes_router)
@@ -256,6 +256,11 @@ async def general_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Внутренняя ошибка сервера"},
     )
+
+
+# Вывод всех маршрутов приложения для отладки
+for route in app.routes:
+    print(f"ROUTE: {route.path}")
 
 
 if __name__ == "__main__":

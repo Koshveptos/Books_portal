@@ -1,17 +1,4 @@
 from auth import current_active_user
-from core.database import get_db
-from core.exceptions import (
-    BookNotFoundException,
-    DatabaseException,
-    InvalidBookDataException,
-    PermissionDeniedException,
-)
-from core.logger_config import (
-    log_db_error,
-    log_info,
-    log_validation_error,
-    log_warning,
-)
 from fastapi import APIRouter, Depends, status
 from models.book import Author, Book, Category, Tag
 from models.user import User
@@ -30,6 +17,20 @@ from sqlalchemy.engine import Result
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from app.core.database import get_db
+from app.core.exceptions import (
+    BookNotFoundException,
+    DatabaseException,
+    InvalidBookDataException,
+    PermissionDeniedException,
+)
+from app.core.logger_config import (
+    log_db_error,
+    log_info,
+    log_validation_error,
+    log_warning,
+)
 
 router = APIRouter()
 
@@ -126,7 +127,7 @@ async def get_book_flat(book_id: int, db: AsyncSession = Depends(get_db)):
     return await get_book(book_id, db)
 
 
-@router.post("/", response_model=BookResponse)
+@router.post("/", response_model=BookResponse, status_code=status.HTTP_201_CREATED)
 async def create_book(
     book: BookCreate,
     db: AsyncSession = Depends(get_db),

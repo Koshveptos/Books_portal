@@ -1,13 +1,14 @@
 import json
 from typing import Any, Dict, List, Optional
 
-from core.exceptions import NotEnoughDataForRecommendationException, RecommendationException
-from core.logger_config import logger
 from fastapi.encoders import jsonable_encoder
 from redis import Redis
 from schemas.recommendations import BookRecommendation, RecommendationStats, RecommendationType
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import NotEnoughDataForRecommendationException, RecommendationException
+from app.core.logger_config import logger
 
 
 class RecommendationService:

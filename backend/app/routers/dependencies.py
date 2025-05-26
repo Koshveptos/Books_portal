@@ -1,7 +1,8 @@
 from auth import current_active_user
-from core.logger_config import logger
 from fastapi import Depends, HTTPException, status
 from models.user import User
+
+from app.core.logger_config import logger
 
 
 async def check_moderator_or_admin_permission(user: User = Depends(current_active_user)):

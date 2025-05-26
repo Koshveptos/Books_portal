@@ -5,9 +5,10 @@
 import asyncio
 import sys
 
-from core.auth import get_user_db
-from core.database import get_db
 from fastapi_users.password import PasswordHelper
+
+from app.core.auth import get_user_db
+from app.core.database import get_db
 
 
 async def create_test_user(email: str, password: str):

@@ -1,43 +1,43 @@
 import sys
 from pathlib import Path
-from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
 
 # Добавляем корневую директорию проекта в sys.path для правильного импорта
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Импорты из auth - после импорта моделей
-from auth import auth_backend, check_admin, current_active_user, fastapi_users
-
-# Импорты из core
-from core.database import get_db
-from core.exceptions import (
-    AuthenticationException,
-    DatabaseException,
-    InvalidUserDataException,
-    PermissionDeniedException,
-    UserAlreadyExistsException,
-    UserNotFoundException,
-)
-from core.logger_config import (
-    log_auth_error,
-    log_auth_info,
-    log_auth_warning,
-    log_db_error,
-    log_info,
-    log_validation_error,
-    log_warning,
-)
-
 # Импорты из FastAPI
-from fastapi import APIRouter, Depends
-from fastapi_users.exceptions import UserAlreadyExists
 
 # Импорты из модулей приложения
 from models.user import User
 
 # Схемы и репозитории
-from schemas.user import ChangeUserStatusRequest, LogoutResponse, TokenResponse, UserCreate, UserRead
+from schemas.user import ChangeUserStatusRequest, LogoutResponse, TokenResponse, UserRead
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Импорты из auth - после импорта моделей
+from app.auth import (
+    auth_backend,
+    check_admin,
+    current_active_user,
+    fastapi_users,
+)
+
+# Импорты из core
+from app.core.database import get_db
+from app.core.exceptions import (
+    AuthenticationException,
+    DatabaseException,
+    PermissionDeniedException,
+    UserNotFoundException,
+)
+from app.core.logger_config import (
+    log_auth_error,
+    log_auth_info,
+    log_db_error,
+    log_info,
+    log_warning,
+)
 
 try:
     from services.user_service import UserService
@@ -55,7 +55,13 @@ except ImportError:
 
 
 # Определение роутера
-router = APIRouter(tags=["users"])
+router = APIRouter(prefix="/users", tags=["users"])
+
+# Добавляем маршруты fastapi-users с явным префиксом
+router.include_router(
+    fastapi_users.get_users_router(UserRead, UserRead),
+    prefix="",  # Пустой префикс, так как базовый префикс уже /users
+)
 
 
 async def refresh_token(
@@ -100,29 +106,9 @@ async def protected_route(user: User = Depends(current_active_user)) -> dict:
         raise AuthenticationException("Ошибка доступа к защищенному маршруту")
 
 
-async def register(
-    user_create: UserCreate,
-    user_manager=Depends(fastapi_users.get_user_manager),
-) -> UserRead:
-    try:
-        log_auth_info(f"Registering new user: {user_create.email}")
-        created_user = await user_manager.create(user_create)
-        log_auth_info(f"User registered successfully: {created_user.email} (id: {created_user.id})")
-        return UserRead.model_validate(created_user)
-    except UserAlreadyExists:
-        log_auth_warning(f"Registration failed: User with email {user_create.email} already exists")
-        raise UserAlreadyExistsException()
-    except ValueError as e:
-        log_validation_error(e, model_name="User", field="registration")
-        raise InvalidUserDataException(message=str(e))
-    except Exception as e:
-        log_auth_error(e, operation="register", email=user_create.email)
-        raise InvalidUserDataException(message=f"Ошибка при регистрации: {str(e)}")
-
-
 @router.patch("/{id}/status", response_model=UserRead)
 async def change_user_status(
-    id: UUID,
+    id: int,
     change_status_req: ChangeUserStatusRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(check_admin),
@@ -161,3 +147,16 @@ async def change_user_status(
         log_db_error(e, operation="change_user_status", table="users", user_id=str(id))
         await db.rollback()
         raise DatabaseException("Ошибка при изменении статуса пользователя")
+
+
+@router.get("/{id}/status", response_model=UserRead)
+async def get_user_status(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(current_active_user),
+) -> UserRead:
+    user_service = UserService(db)
+    user = await user_service.get_by_id(id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    return UserRead.model_validate(user)

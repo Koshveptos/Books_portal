@@ -1,19 +1,6 @@
 import json
 from typing import List, Optional
 
-from core.dependencies import get_current_active_user, get_db, get_redis_client
-from core.exceptions import (
-    CacheException,
-    DatabaseException,
-    NotEnoughDataForRecommendationException,
-    RecommendationException,
-)
-from core.logger_config import (
-    log_cache_error,
-    log_db_error,
-    log_info,
-    log_warning,
-)
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
 from models.user import User
@@ -28,6 +15,20 @@ from services.recommendations import (
     get_tag_recommendations_from_db,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.dependencies import get_current_active_user, get_db, get_redis_client
+from app.core.exceptions import (
+    CacheException,
+    DatabaseException,
+    NotEnoughDataForRecommendationException,
+    RecommendationException,
+)
+from app.core.logger_config import (
+    log_cache_error,
+    log_db_error,
+    log_info,
+    log_warning,
+)
 
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 

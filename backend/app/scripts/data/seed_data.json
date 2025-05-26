@@ -1,0 +1,267 @@
+{
+    "authors": [
+      {
+        "name": "Фёдор Достоевский"
+      },
+      {
+        "name": "Лев Толстой"
+      },
+      {
+        "name": "Антон Чехов"
+      },
+      {
+        "name": "Джордж Оруэлл"
+      },
+      {
+        "name": "Рэй Брэдбери"
+      },
+      {
+        "name": "Михаил Булгаков"
+      },
+      {
+        "name": "Александр Пушкин"
+      },
+      {
+        "name": "Николай Гоголь"
+      }
+    ],
+    "categories": [
+      {
+        "name_categories": "Классическая литература",
+        "description": "Произведения, признанные классикой мировой литературы"
+      },
+      {
+        "name_categories": "Фантастика",
+        "description": "Научная фантастика, фэнтези и другие жанры фантастической литературы"
+      },
+      {
+        "name_categories": "Детективы",
+        "description": "Детективные романы и повести"
+      },
+      {
+        "name_categories": "Психологическая проза",
+        "description": "Произведения, исследующие психологию человека"
+      },
+      {
+        "name_categories": "Исторические романы",
+        "description": "Художественные произведения на историческую тематику"
+      },
+      {
+        "name_categories": "Поэзия",
+        "description": "Стихотворные произведения"
+      },
+      {
+        "name_categories": "Драматургия",
+        "description": "Пьесы и драматические произведения"
+      }
+    ],
+    "tags": [
+      {
+        "name_tag": "Русская классика"
+      },
+      {
+        "name_tag": "Антиутопия"
+      },
+      {
+        "name_tag": "Психологический роман"
+      },
+      {
+        "name_tag": "Философская проза"
+      },
+      {
+        "name_tag": "Социальная драма"
+      },
+      {
+        "name_tag": "Научная фантастика"
+      },
+      {
+        "name_tag": "Исторический роман"
+      },
+      {
+        "name_tag": "Повесть"
+      },
+      {
+        "name_tag": "Рассказ"
+      },
+      {
+        "name_tag": "Роман"
+      },
+      {
+        "name_tag": "Поэма"
+      },
+      {
+        "name_tag": "Комедия"
+      },
+      {
+        "name_tag": "Трагедия"
+      }
+    ],
+    "books": [
+      {
+        "title": "Преступление и наказание",
+        "description": "Роман о нравственных последствиях преступления и возможности искупления вины через страдание.",
+        "year": "1866",
+        "publisher": "Русский вестник",
+        "isbn": "978-5-389-12345-1",
+        "language": "RU",
+        "cover": "crime_and_punishment.jpg",
+        "file_url": "crime_and_punishment.pdf",
+        "authors": [1],
+        "categories": [1, 4],
+        "tags": [1, 3, 4]
+      },
+      {
+        "title": "Война и мир",
+        "description": "Эпический роман, описывающий русское общество в эпоху войн против Наполеона.",
+        "year": "1869",
+        "publisher": "Русский вестник",
+        "isbn": "978-5-389-12346-2",
+        "language": "RU",
+        "cover": "war_and_peace.jpg",
+        "file_url": "war_and_peace.pdf",
+        "authors": [2],
+        "categories": [1, 5],
+        "tags": [1, 7, 10]
+      },
+      {
+        "title": "Вишнёвый сад",
+        "description": "Пьеса о гибели дворянских гнёзд и приходе новой эпохи.",
+        "year": "1904",
+        "publisher": "Знание",
+        "isbn": "978-5-389-12347-3",
+        "language": "RU",
+        "cover": "cherry_orchard.jpg",
+        "file_url": "cherry_orchard.pdf",
+        "authors": [3],
+        "categories": [7],
+        "tags": [1, 5, 8]
+      },
+      {
+        "title": "1984",
+        "description": "Антиутопический роман о тоталитарном обществе и контроле над мыслями.",
+        "year": "1949",
+        "publisher": "Secker & Warburg",
+        "isbn": "978-5-389-12348-4",
+        "language": "RU",
+        "cover": "1984.jpg",
+        "file_url": "1984.pdf",
+        "authors": [4],
+        "categories": [2],
+        "tags": [2, 6, 10]
+      },
+      {
+        "title": "451 градус по Фаренгейту",
+        "description": "Антиутопический роман о будущем, где книги находятся под запретом.",
+        "year": "1953",
+        "publisher": "Ballantine Books",
+        "isbn": "978-5-389-12349-5",
+        "language": "RU",
+        "cover": "fahrenheit_451.jpg",
+        "file_url": "fahrenheit_451.pdf",
+        "authors": [5],
+        "categories": [2],
+        "tags": [2, 6, 10]
+      },
+      {
+        "title": "Идиот",
+        "description": "Роман о князе Мышкине, олицетворяющем христианскую добродетель.",
+        "year": "1869",
+        "publisher": "Русский вестник",
+        "isbn": "978-5-389-12350-6",
+        "language": "RU",
+        "cover": "idiot.jpg",
+        "file_url": "idiot.pdf",
+        "authors": [1],
+        "categories": [1, 4],
+        "tags": [1, 3, 4, 10]
+      },
+      {
+        "title": "Анна Каренина",
+        "description": "Роман о трагической любви замужней женщины к блестящему офицеру.",
+        "year": "1877",
+        "publisher": "Русский вестник",
+        "isbn": "978-5-389-12351-7",
+        "language": "RU",
+        "cover": "anna_karenina.jpg",
+        "file_url": "anna_karenina.pdf",
+        "authors": [2],
+        "categories": [1, 4],
+        "tags": [1, 3, 5, 10]
+      },
+      {
+        "title": "Скотный двор",
+        "description": "Аллегорическая повесть о революции и тоталитаризме.",
+        "year": "1945",
+        "publisher": "Secker & Warburg",
+        "isbn": "978-5-389-12352-8",
+        "language": "RU",
+        "cover": "animal_farm.jpg",
+        "file_url": "animal_farm.pdf",
+        "authors": [4],
+        "categories": [2],
+        "tags": [2, 5, 8]
+      },
+      {
+        "title": "Мастер и Маргарита",
+        "description": "Роман о добре и зле, любви и предательстве, о вечных ценностях.",
+        "year": "1967",
+        "publisher": "ИМЛИ РАН",
+        "isbn": "978-5-389-12353-9",
+        "language": "RU",
+        "cover": "master_and_margarita.jpg",
+        "file_url": "master_and_margarita.pdf",
+        "authors": [6],
+        "categories": [1, 2],
+        "tags": [1, 4, 10]
+      },
+      {
+        "title": "Евгений Онегин",
+        "description": "Роман в стихах о любви и судьбе главного героя.",
+        "year": "1833",
+        "publisher": "Типография Глазунова",
+        "isbn": "978-5-389-12354-0",
+        "language": "RU",
+        "cover": "eugene_onegin.jpg",
+        "file_url": "eugene_onegin.pdf",
+        "authors": [7],
+        "categories": [1, 6],
+        "tags": [1, 11]
+      },
+      {
+        "title": "Мёртвые души",
+        "description": "Поэма о путешествии Чичикова по России и его сделках с помещиками.",
+        "year": "1842",
+        "publisher": "Московский наблюдатель",
+        "isbn": "978-5-389-12355-1",
+        "language": "RU",
+        "cover": "dead_souls.jpg",
+        "file_url": "dead_souls.pdf",
+        "authors": [8],
+        "categories": [1],
+        "tags": [1, 7, 11]
+      },
+      {
+        "title": "Ревизор",
+        "description": "Комедия о чиновниках, принявших проезжего за ревизора.",
+        "year": "1836",
+        "publisher": "Типография Глазунова",
+        "isbn": "978-5-389-12356-2",
+        "language": "RU",
+        "cover": "inspector.jpg",
+        "file_url": "inspector.pdf",
+        "authors": [8],
+        "categories": [7],
+        "tags": [1, 12]
+      }
+    ],
+    "users": [
+      {
+        "email": "admin0000@example.com",
+        "password": "string",
+        "is_active": true,
+        "is_superuser": false,
+        "is_verified": false,
+        "is_moderator": false
+      }
+    ]
+  }

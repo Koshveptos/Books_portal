@@ -1,55 +1,39 @@
 import sys
 from pathlib import Path
 
+from fastapi import APIRouter
+
 # Добавляем корневую директорию проекта в sys.path для правильного импорта
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Теперь импортируем из глобальной области видимости
-from auth import auth_backend, fastapi_users
-from core.exceptions import (
+
+from app.auth import auth_backend, fastapi_users
+from app.core.exceptions import (
     AuthenticationException,
     CredentialsException,
     TokenExpiredException,
-    UserAlreadyExistsException,
-    ValidationException,
 )
-from core.logger_config import (
+from app.core.logger_config import (
     log_auth_error,
     log_auth_info,
     log_auth_warning,
-    log_validation_error,
 )
-from fastapi import APIRouter
-from schemas.user import LogoutResponse, TokenResponse, UserRead
+from app.schemas.user import LogoutResponse, TokenResponse, UserCreate, UserRead
 
-# Импортируем пользовательские функции после импорта auth
-from .user import logout, protected_route, refresh_token, register
+from .user import logout, protected_route, refresh_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Добавляем встроенный роутер регистрации первым
+router.include_router(
+    fastapi_users.get_register_router(UserRead, UserCreate),
+)
 
 # Встроенные маршруты fastapi-users
 router.include_router(
     fastapi_users.get_auth_router(auth_backend),
     prefix="/jwt",
 )
-
-
-# Кастомный маршрут регистрации с обработкой ошибок
-@router.post("/register", response_model=UserRead)
-async def register_route():
-    try:
-        log_auth_info("Processing registration request")
-        return await register()
-    except UserAlreadyExistsException as e:
-        log_auth_warning(f"Registration attempt with existing email: {str(e)}")
-        raise
-    except ValidationException as e:
-        log_validation_error(e, model_name="User", field="registration")
-        raise
-    except Exception as e:
-        log_auth_error(e, operation="register")
-        raise AuthenticationException("Ошибка при регистрации пользователя")
-
 
 # Маршрут сброса пароля
 router.include_router(

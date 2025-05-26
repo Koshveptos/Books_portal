@@ -1,9 +1,10 @@
-from core.config import settings
-from core.database import get_db
 from fastapi import Depends
 from fastapi_users import BaseUserManager
 from models.user import User
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.database import get_db
 
 
 class UserService(BaseUserManager[User, int]):

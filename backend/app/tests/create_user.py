@@ -21,7 +21,7 @@ def create_user(email, password):
 
     try:
         response = requests.post(
-            "http://localhost:8000/auth/register", json=user_data, headers={"Content-Type": "application/json"}
+            "http://localhost:8000/auth/jwt/register", json=user_data, headers={"Content-Type": "application/json"}
         )
 
         print(f"Статус ответа: {response.status_code}")

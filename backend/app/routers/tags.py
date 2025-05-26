@@ -1,18 +1,6 @@
 from typing import List
 
 from auth import admin_or_moderator, check_admin
-from core.database import get_db
-from core.exceptions import (
-    DatabaseException,
-    InvalidTagDataException,
-    PermissionDeniedException,
-    TagNotFoundException,
-)
-from core.logger_config import (
-    log_db_error,
-    log_info,
-    log_warning,
-)
 from fastapi import APIRouter, Depends, status
 from models.book import Tag as TagModel
 from models.user import User
@@ -21,6 +9,19 @@ from services.book_servise import TagRepository
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.core.exceptions import (
+    DatabaseException,
+    InvalidTagDataException,
+    PermissionDeniedException,
+    TagNotFoundException,
+)
+from app.core.logger_config import (
+    log_db_error,
+    log_info,
+    log_warning,
+)
 
 router = APIRouter(tags=["tags"])
 

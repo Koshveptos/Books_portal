@@ -2,12 +2,13 @@
 
 import logging
 
-from core.config import settings
-from core.logger_config import logger
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+
+from app.core.config import settings
+from app.core.logger_config import logger
 
 # Определяем базовый класс для всех моделей если его нет
 Base = declarative_base()

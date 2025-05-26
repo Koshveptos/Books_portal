@@ -1,18 +1,6 @@
 from typing import List
 
 from auth import current_active_user
-from core.database import get_db
-from core.exceptions import (
-    BookNotFoundException,
-    DatabaseException,
-    FavoriteAlreadyExistsException,
-    FavoriteNotFoundException,
-)
-from core.logger_config import (
-    log_db_error,
-    log_info,
-    log_warning,
-)
 from fastapi import APIRouter, Depends, status
 from models.book import Book, favorites
 from models.user import User
@@ -21,6 +9,19 @@ from sqlalchemy import delete, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from app.core.database import get_db
+from app.core.exceptions import (
+    BookNotFoundException,
+    DatabaseException,
+    FavoriteAlreadyExistsException,
+    FavoriteNotFoundException,
+)
+from app.core.logger_config import (
+    log_db_error,
+    log_info,
+    log_warning,
+)
 
 router = APIRouter(prefix="/favorites", tags=["favorites"])
 

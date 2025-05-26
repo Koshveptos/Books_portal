@@ -1,10 +1,11 @@
 from typing import List, Optional
 
-from core.logger_config import logger
 from models.book import Author
 from schemas.book import AuthorCreate, AuthorUpdate
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.logger_config import logger
 
 
 class AuthorsService:

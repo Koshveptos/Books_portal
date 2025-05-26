@@ -17,7 +17,7 @@ async def create_test_user():
 
         print(f"Регистрация пользователя: {user_data['email']}")
 
-        response = await client.post("/auth/register", json=user_data)
+        response = await client.post("/auth/jwt/jwt/register", json=user_data)
 
         print(f"Код ответа: {response.status_code}")
         print(f"Тело ответа: {response.text}")

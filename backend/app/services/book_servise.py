@@ -1,10 +1,11 @@
-from core.database import get_db
-from core.logger_config import logger
 from fastapi import Depends
 from models.book import Author, Category, Tag
 from schemas.book import AuthorCreate, AuthorUpdate, CategoryCreate, CategoryUpdate, TagCreate, TagUpdate
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+
+from app.core.database import get_db
+from app.core.logger_config import logger
 
 
 class BookService:

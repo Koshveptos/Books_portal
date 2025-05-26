@@ -1,18 +1,6 @@
 from typing import List, Optional
 
 from auth import current_active_user
-from core.database import get_db
-from core.exceptions import (
-    BookNotFoundException,
-    DatabaseException,
-    InvalidRatingValueException,
-    RatingNotFoundException,
-)
-from core.logger_config import (
-    log_db_error,
-    log_info,
-    log_warning,
-)
 from fastapi import APIRouter, Depends, Query, status
 from models.book import Book, Rating
 from models.user import User
@@ -20,6 +8,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.core.exceptions import (
+    BookNotFoundException,
+    DatabaseException,
+    InvalidRatingValueException,
+    RatingNotFoundException,
+)
+from app.core.logger_config import (
+    log_db_error,
+    log_info,
+    log_warning,
+)
 
 router = APIRouter(prefix="/ratings", tags=["ratings"])
 

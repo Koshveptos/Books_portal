@@ -4,11 +4,6 @@ from pathlib import Path
 # Добавляем корневую директорию проекта в sys.path для правильного импорта
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Импорты из core
-from core.database import get_db
-from core.exceptions import PermissionDeniedException
-from core.logger_config import logger
-
 # Импорты из FastAPI
 from fastapi import Depends, HTTPException, status
 from fastapi_users import BaseUserManager, FastAPIUsers
@@ -17,7 +12,16 @@ from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 
 # Импортируем User напрямую из файла для избежания циклической зависимости
 from models.user import User
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Импорты из core
+from app.core.database import get_db
+from app.core.exceptions import PermissionDeniedException
+from app.core.logger_config import logger
+
+# Импортируем схемы пользователя
+from app.schemas.user import UserCreate
 
 # Секреты для JWT
 ACCESS_TOKEN_SECRET = "your_access_token_secret"
@@ -49,8 +53,20 @@ async def get_user_db(session: AsyncSession = Depends(get_db)) -> SQLAlchemyUser
     return SQLAlchemyUserDatabase(session, User)
 
 
-# Кастомный UserManager
+# Класс менеджера пользователей
 class UserManager(BaseUserManager[User, int]):
+    reset_password_token_secret = ACCESS_TOKEN_SECRET
+    verification_token_secret = ACCESS_TOKEN_SECRET
+
+    async def on_after_register(self, user: User, request=None):
+        print(f"User {user.id} has registered.")
+
+    async def on_after_forgot_password(self, user: User, token: str, request=None):
+        print(f"User {user.id} has forgot their password. Reset token: {token}")
+
+    async def on_after_request_verify(self, user: User, token: str, request=None):
+        print(f"Verification requested for user {user.id}. Verification token: {token}")
+
     # Реализация метода parse_id для обработки идентификаторов пользователей
     def parse_id(self, user_id: str) -> int:
         """
@@ -63,24 +79,50 @@ class UserManager(BaseUserManager[User, int]):
             logger.error(f"Failed to parse user_id: {user_id}")
             raise ValueError(f"Invalid user ID format: {user_id}")
 
-    async def create(self, user_create, **kwargs):
-        user_dict = user_create.dict(exclude_unset=True)
-        # Запрещаем регистрацию с is_moderator=True или is_superuser=True
-        if user_dict.get("is_moderator", False) or user_dict.get("is_superuser", False):
-            logger.warning(f"Attempt to register with elevated privileges: {user_dict.get('email')}")
-            raise ValueError("Cannot register with elevated privileges")
+    async def create(self, user_create: UserCreate, safe: bool = False, **kwargs) -> User:
+        try:
+            logger.info("Starting user creation process")
+            user_dict = user_create.model_dump()
+            logger.info(f"User data after dict conversion: {user_dict}")
 
-        # Логируем параметры перед сохранением
-        logger.info(f"User parameters before save: {user_dict}")
+            # Проверяем наличие пароля
+            if "password" not in user_dict:
+                logger.error("Password field is missing in user data")
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пароль обязателен для регистрации")
 
-        password = user_dict.pop("password")
-        user_dict["hashed_password"] = self.password_helper.hash(password)
+            # Проверяем права доступа только если safe=True
+            if safe and (user_dict.get("is_superuser") or user_dict.get("is_moderator")):
+                logger.warning(f"Attempt to register with elevated privileges: {user_dict.get('email')}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Невозможно создать пользователя с повышенными привилегиями",
+                )
 
-        logger.info(f"Creating new user: {user_dict.get('email')}")
-        created_user = await self.user_db.create(user_dict)
-        await self.on_after_register(created_user, None)
-        logger.info(f"User created successfully: {created_user.email}")
-        return created_user
+            logger.info(f"User parameters before save: {user_dict}")
+            user_dict["hashed_password"] = self.password_helper.hash(user_dict.pop("password"))
+            logger.info("Password hashed successfully")
+
+            logger.info(f"Creating new user: {user_dict['email']}")
+            try:
+                created_user = await self.user_db.create(user_dict)
+                logger.info(f"User created successfully in database: {created_user.email}")
+                print(f"User {created_user.id} has registered.")
+                logger.info(f"User registration completed: {created_user.email}")
+                return created_user
+            except IntegrityError as e:
+                if "ix_users_email" in str(e):
+                    logger.warning(f"Attempt to register with existing email: {user_dict['email']}")
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT, detail="Пользователь с таким email уже существует"
+                    )
+                raise
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"Error during user creation: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка при создании пользователя"
+            )
 
     async def update(self, user_update, user, **kwargs):
         # Проверяем, что только суперпользователь может менять is_moderator или is_superuser
@@ -107,7 +149,8 @@ fastapi_users = FastAPIUsers[User, int](
 )
 
 # Получение текущего пользователя
-current_active_user = fastapi_users.current_user(active=True)
+current_active_user = fastapi_users.current_user(active=True, optional=False)
+current_required_user = fastapi_users.current_user(active=True)
 
 # Получение суперпользователя
 current_superuser = fastapi_users.current_user(active=True, superuser=True)

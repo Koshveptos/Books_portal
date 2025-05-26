@@ -5,8 +5,6 @@
 import logging
 from typing import Optional
 
-from core.config import settings
-from core.database import get_db
 from fastapi import Depends, HTTPException, Request, status
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import (
@@ -17,6 +15,9 @@ from fastapi_users.authentication import (
 from fastapi_users.db import SQLAlchemyUserDatabase
 from models.user import User
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.database import get_db
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -122,8 +123,7 @@ fastapi_users = FastAPIUsers[User, int](
     [auth_backend],
 )
 
-# Получение текущего пользователя - делаем авторизацию необязательной для большинства маршрутов
-current_active_user = fastapi_users.current_user(active=True, optional=True)
+# Получение текущего пользователя с обязательной авторизацией
 current_required_user = fastapi_users.current_user(active=True)
 
 
