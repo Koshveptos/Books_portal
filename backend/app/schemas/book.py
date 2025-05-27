@@ -194,3 +194,12 @@ class BookSearchResponse(BaseModel):
     size: int = 10
     filters: Dict[str, Any] = Field(default_factory=dict)
     query: Optional[str] = None
+
+
+class UserRatingResponse(BaseModel):
+    """
+    Схема для ответа с книгой и оценкой пользователя.
+    """
+
+    book: BookResponse
+    user_rating: float = Field(..., description="Оценка пользователя", ge=1, le=5)

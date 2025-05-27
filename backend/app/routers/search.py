@@ -34,10 +34,10 @@ async def search_books(
         None, description="Поле для поиска (title, description или пусто для поиска по всем полям)"
     ),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(current_active_user),
 ):
     """
     Полнотекстовый поиск книг по названию и описанию.
+    Публичный эндпоинт, доступный без авторизации.
 
     Запрос должен содержать минимум 3 символа.
     Результаты сортируются по релевантности.
@@ -55,7 +55,7 @@ async def search_books(
     Если операторы не указаны, по умолчанию используется AND с учетом морфологии.
     """
     try:
-        log_info(f"User {user.email} searching for: '{q}'{f' in field {field}' if field else ''}")
+        log_info(f"Searching for: '{q}'{f' in field {field}' if field else ''}")
 
         books_service = BooksService(db)
         books = await books_service.search_books(q, limit, field)

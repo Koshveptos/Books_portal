@@ -53,12 +53,12 @@ async def create_category(
         raise
     except IntegrityError as e:
         await db.rollback()
-        log_db_error(e, operation="create_category", table="categories")
-        raise InvalidCategoryDataException("Ошибка при создании категории")
+        log_db_error(e, operation="create_category", table="categories", category_name=category_data.name_categories)
+        raise InvalidCategoryDataException("Ошибка целостности данных при создании категории")
     except Exception as e:
         await db.rollback()
-        log_db_error(e, operation="create_category", table="categories")
-        raise DatabaseException("Ошибка при создании категории")
+        log_db_error(e, operation="create_category", table="categories", category_name=category_data.name_categories)
+        raise DatabaseException("Непредвиденная ошибка при создании категории")
 
 
 @router.get("/", response_model=List[Category])
@@ -72,6 +72,7 @@ async def get_all_categories(session: AsyncSession = Depends(get_db)):
         return categories
     except Exception as e:
         log_db_error(e, operation="get_all_categories", table="categories")
+        await session.rollback()
         raise DatabaseException("Ошибка при получении списка категорий")
 
 
@@ -90,7 +91,8 @@ async def get_category(category_id: int, session: AsyncSession = Depends(get_db)
     except CategoryNotFoundException:
         raise
     except Exception as e:
-        log_db_error(e, operation="get_category", table="categories", category_id=category_id)
+        log_db_error(e, operation="get_category", table="categories", category_id=str(category_id))
+        await session.rollback()
         raise DatabaseException("Ошибка при получении категории")
 
 
@@ -99,6 +101,21 @@ async def update_category(category_id: int, category_data: CategoryUpdate, sessi
     """Обновление категории (доступно только для админов и модераторов)"""
     try:
         log_info(f"Updating category with id: {category_id}")
+
+        # Проверяем существование категории с таким именем
+        if category_data.name_categories:
+            stmt = select(CategoryModel).where(
+                CategoryModel.name_categories == category_data.name_categories, CategoryModel.id != category_id
+            )
+            result = await session.execute(stmt)
+            existing_category = result.scalars().first()
+
+            if existing_category:
+                log_warning(f"Attempt to update category to duplicate name: {category_data.name_categories}")
+                raise InvalidCategoryDataException(
+                    f"Категория с именем '{category_data.name_categories}' уже существует"
+                )
+
         category_repo = CategoryRepository(session)
         category = await category_repo.update(category_id, category_data)
         if not category:
@@ -106,16 +123,16 @@ async def update_category(category_id: int, category_data: CategoryUpdate, sessi
             raise CategoryNotFoundException(message=f"Категория с ID {category_id} не найдена")
         log_info(f"Category updated successfully: {category.name_categories} (id: {category.id})")
         return category
-    except (CategoryNotFoundException, PermissionDeniedException):
+    except (CategoryNotFoundException, PermissionDeniedException, InvalidCategoryDataException):
         raise
     except IntegrityError as e:
         await session.rollback()
-        log_db_error(e, operation="update_category", table="categories", category_id=category_id)
-        raise InvalidCategoryDataException("Ошибка при обновлении категории")
+        log_db_error(e, operation="update_category", table="categories", category_id=str(category_id))
+        raise InvalidCategoryDataException("Ошибка целостности данных при обновлении категории")
     except Exception as e:
         await session.rollback()
-        log_db_error(e, operation="update_category", table="categories", category_id=category_id)
-        raise DatabaseException("Ошибка при обновлении категории")
+        log_db_error(e, operation="update_category", table="categories", category_id=str(category_id))
+        raise DatabaseException("Непредвиденная ошибка при обновлении категории")
 
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(admin_or_moderator)])
@@ -123,16 +140,28 @@ async def delete_category(category_id: int, session: AsyncSession = Depends(get_
     """Удаление категории (доступно только для админов и модераторов)"""
     try:
         log_info(f"Deleting category with id: {category_id}")
+
+        # Проверяем существование категории перед удалением
         category_repo = CategoryRepository(session)
-        result = await category_repo.delete(category_id)
-        if not result:
+        category = await category_repo.get_by_id(category_id)
+        if not category:
             log_warning(f"Category not found for deletion: id={category_id}")
             raise CategoryNotFoundException(message=f"Категория с ID {category_id} не найдена")
+
+        result = await category_repo.delete(category_id)
+        if not result:
+            log_warning(f"Failed to delete category: id={category_id}")
+            raise DatabaseException("Не удалось удалить категорию")
+
         log_info(f"Category deleted successfully: id={category_id}")
         return None
     except (CategoryNotFoundException, PermissionDeniedException):
         raise
+    except IntegrityError as e:
+        await session.rollback()
+        log_db_error(e, operation="delete_category", table="categories", category_id=str(category_id))
+        raise InvalidCategoryDataException("Невозможно удалить категорию, так как она используется в книгах")
     except Exception as e:
         await session.rollback()
-        log_db_error(e, operation="delete_category", table="categories", category_id=category_id)
-        raise DatabaseException("Ошибка при удалении категории")
+        log_db_error(e, operation="delete_category", table="categories", category_id=str(category_id))
+        raise DatabaseException("Непредвиденная ошибка при удалении категории")

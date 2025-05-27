@@ -124,6 +124,15 @@ async def delete_rating(
     try:
         log_info(f"User {current_user.id} attempting to delete rating for book {book_id}")
 
+        # Проверяем существование книги
+        book_query = select(Book).where(Book.id == book_id)
+        result = await db.execute(book_query)
+        book = result.scalar_one_or_none()
+
+        if not book:
+            log_warning(f"Attempt to delete rating for non-existent book: id={book_id}, user id={current_user.id}")
+            raise BookNotFoundException(message=f"Книга с ID {book_id} не найдена")
+
         # Находим оценку пользователя для этой книги
         rating_query = select(Rating).where((Rating.user_id == current_user.id) & (Rating.book_id == book_id))
         result = await db.execute(rating_query)
@@ -140,7 +149,7 @@ async def delete_rating(
 
         return None
 
-    except RatingNotFoundException:
+    except (BookNotFoundException, RatingNotFoundException):
         raise
     except Exception as e:
         await db.rollback()

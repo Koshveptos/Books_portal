@@ -91,51 +91,82 @@ async def get_recommendations(
             try:
                 cached_recommendations = await redis_client.get(f"recommendations:{current_user.id}")
                 if cached_recommendations:
-                    return json.loads(cached_recommendations)
+                    try:
+                        recommendations = json.loads(cached_recommendations)
+                        log_info(
+                            f"Successfully retrieved {len(recommendations)} recommendations from cache for user {current_user.id}"
+                        )
+                        return recommendations
+                    except json.JSONDecodeError as e:
+                        log_cache_error(
+                            e, operation="parse_cached_recommendations", key=f"recommendations:{current_user.id}"
+                        )
+                        # Если не удалось распарсить кэш, продолжаем с получением из БД
             except Exception as e:
                 log_cache_error(e, operation="get_recommendations", key=f"recommendations:{current_user.id}")
+                # Если кэш недоступен, продолжаем с получением из БД
 
         # Получаем рекомендации из базы данных
-        recommendation_service = RecommendationService(db, redis_client)
-        recommendations = await recommendation_service.get_user_recommendations(
-            user_id=current_user.id,
-            limit=limit,
-            min_rating=min_rating,
-            min_year=min_year,
-            max_year=max_year,
-            min_ratings_count=min_ratings_count,
-            recommendation_type=recommendation_type,
-            cache=use_cache,
-        )
-
-        if not recommendations:
-            log_info(f"No recommendations found for user {current_user.id}")
-            return JSONResponse(
-                status_code=status.HTTP_204_NO_CONTENT,
-                content={"message": "Рекомендации не найдены. Попробуйте изменить параметры запроса."},
+        try:
+            recommendation_service = RecommendationService(db, redis_client)
+            recommendations = await recommendation_service.get_user_recommendations(
+                user_id=current_user.id,
+                limit=limit,
+                min_rating=min_rating,
+                min_year=min_year,
+                max_year=max_year,
+                min_ratings_count=min_ratings_count,
+                recommendation_type=recommendation_type,
             )
 
-        log_info(f"Found {len(recommendations)} recommendations for user {current_user.id}")
+            if not recommendations:
+                log_info(f"No recommendations found for user {current_user.id}")
+                return []  # Возвращаем пустой список вместо 204 No Content
 
-        # Сохраняем в кэш
-        if use_cache:
+            log_info(f"Found {len(recommendations)} recommendations for user {current_user.id}")
+
+            # Сохраняем в кэш
+            if use_cache:
+                try:
+                    await redis_client.set(
+                        f"recommendations:{current_user.id}", json.dumps(recommendations), expire=3600  # 1 час
+                    )
+                    log_info(f"Successfully cached {len(recommendations)} recommendations for user {current_user.id}")
+                except Exception as e:
+                    log_cache_error(e, operation="cache_recommendations", key=f"recommendations:{current_user.id}")
+                    # Если не удалось сохранить в кэш, продолжаем без кэширования
+
+            return recommendations
+
+        except NotEnoughDataForRecommendationException as e:
+            log_warning(f"Not enough data for recommendations: {str(e)}")
+            return []  # Возвращаем пустой список вместо 204 No Content
+        except Exception as e:
+            log_db_error(error=e, operation="get_recommendations", table="recommendations")
+            # Пытаемся получить популярные книги как запасной вариант
             try:
-                await redis_client.set(
-                    f"recommendations:{current_user.id}", json.dumps(recommendations), expire=3600  # 1 час
+                log_info(f"Attempting to get popular books as fallback for user {current_user.id}")
+                recommendation_service = RecommendationService(db, None)  # Отключаем кэш для запасного варианта
+                recommendations = await recommendation_service._get_popularity_recommendations(
+                    limit=limit,
+                    min_rating=min_rating,
+                    min_year=min_year,
+                    max_year=max_year,
+                    min_ratings_count=min_ratings_count,
+                    exclude_book_ids=set(),
                 )
-            except Exception as e:
-                log_cache_error(e, operation="cache_recommendations", key=f"recommendations:{current_user.id}")
+                if recommendations:
+                    log_info(f"Successfully retrieved {len(recommendations)} popular books as fallback")
+                    return recommendations
+            except Exception as fallback_error:
+                log_db_error(error=fallback_error, operation="get_popular_recommendations", table="recommendations")
 
-        return recommendations
-    except NotEnoughDataForRecommendationException as e:
-        log_warning(f"Not enough data for recommendations: {str(e)}")
-        return JSONResponse(
-            status_code=status.HTTP_204_NO_CONTENT,
-            content={"message": str(e)},
-        )
+            # Если даже запасной вариант не сработал, возвращаем пустой список
+            return []
+
     except Exception as e:
         log_db_error(error=e, operation="get_recommendations", table="recommendations")
-        raise RecommendationException("Ошибка при получении рекомендаций")
+        return []  # Возвращаем пустой список вместо 500 Internal Server Error
 
 
 @router.get("/stats", response_model=RecommendationStats)
@@ -155,18 +186,30 @@ async def get_recommendation_stats(
         log_info(f"Getting recommendation stats for user {current_user.id}")
 
         # Пытаемся получить статистику из кэша
-        cached_stats = await redis_client.get(f"recommendation_stats:{current_user.id}")
-        if cached_stats:
-            return json.loads(cached_stats)
+        try:
+            cached_stats = await redis_client.get(f"recommendation_stats:{current_user.id}")
+            if cached_stats:
+                try:
+                    return json.loads(cached_stats)
+                except json.JSONDecodeError as e:
+                    log_cache_error(e, operation="parse_cached_stats", key=f"recommendation_stats:{current_user.id}")
+                    # Если не удалось распарсить кэш, продолжаем с получением из БД
+        except Exception as e:
+            log_cache_error(e, operation="get_recommendation_stats", key=f"recommendation_stats:{current_user.id}")
+            # Если кэш недоступен, продолжаем с получением из БД
 
-        # Если в кэше нет, получаем статистику из базы данных
+        # Если в кэше нет или произошла ошибка, получаем статистику из базы данных
         recommendation_service = RecommendationService(db, redis_client)
         stats = await recommendation_service.get_recommendation_stats(user_id=current_user.id)
 
         log_info(f"Successfully retrieved recommendation stats for user {current_user.id}")
 
         # Сохраняем в кэш
-        await redis_client.set(f"recommendation_stats:{current_user.id}", json.dumps(stats), expire=3600)  # 1 час
+        try:
+            await redis_client.set(f"recommendation_stats:{current_user.id}", json.dumps(stats), expire=3600)  # 1 час
+        except Exception as e:
+            log_cache_error(e, operation="cache_recommendation_stats", key=f"recommendation_stats:{current_user.id}")
+            # Если не удалось сохранить в кэш, продолжаем без кэширования
 
         return stats
     except CacheException as e:

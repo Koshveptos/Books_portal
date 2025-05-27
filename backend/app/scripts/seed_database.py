@@ -4,12 +4,12 @@ import sys
 from pathlib import Path
 
 from fastapi_users.password import PasswordHelper
-from models import Author, Book, Category, Tag, User
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal, engine
+from app.models import Author, Book, Category, Tag, User
 
 # Добавляем путь к корню проекта
 project_root = Path(__file__).parent.parent.parent

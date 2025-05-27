@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
 # Добавляем корневую директорию проекта в sys.path для правильного импорта
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from models.user import User
 
 # Схемы и репозитории
-from schemas.user import ChangeUserStatusRequest, LogoutResponse, TokenResponse, UserRead
+from schemas.user import ChangeUserStatusRequest, LogoutResponse, TokenResponse, UserRead, UserUpdate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Импорты из auth - после импорта моделей
@@ -74,8 +74,9 @@ async def refresh_token(
         log_auth_info(f"Token refreshed successfully for user: {user.email}")
         return TokenResponse(access_token=new_access_token, token_type="bearer")
     except Exception as e:
-        log_auth_error(e, operation="refresh_token")
-        raise AuthenticationException("Недействительный токен обновления")
+        log_auth_error(e, operation="refresh_token", user_id=str(user.id))
+        await session.rollback()
+        raise AuthenticationException("Ошибка при обновлении токена доступа")
 
 
 async def logout(user: User = Depends(current_active_user)) -> LogoutResponse:
@@ -87,7 +88,7 @@ async def logout(user: User = Depends(current_active_user)) -> LogoutResponse:
         # то реального "выхода" не происходит - клиент просто должен удалить токен
         return LogoutResponse(detail="Successfully logged out")
     except Exception as e:
-        log_auth_error(e, operation="logout")
+        log_auth_error(e, operation="logout", user_id=str(user.id))
         raise AuthenticationException("Ошибка при выходе из системы")
 
 
@@ -102,7 +103,7 @@ async def protected_route(user: User = Depends(current_active_user)) -> dict:
             "is_moderator": user.is_moderator,
         }
     except Exception as e:
-        log_auth_error(e, operation="protected_route")
+        log_auth_error(e, operation="protected_route", user_id=str(user.id))
         raise AuthenticationException("Ошибка доступа к защищенному маршруту")
 
 
@@ -155,8 +156,122 @@ async def get_user_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(current_active_user),
 ) -> UserRead:
-    user_service = UserService(db)
-    user = await user_service.get_by_id(id)
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-    return UserRead.model_validate(user)
+    try:
+        user_service = UserService(db)
+        user = await user_service.get_by_id(id)
+        if not user:
+            log_warning(f"Attempted to get status for non-existent user with id: {id}")
+            raise UserNotFoundException(f"Пользователь с ID {id} не найден")
+        return UserRead.model_validate(user)
+    except UserNotFoundException:
+        raise
+    except Exception as e:
+        log_db_error(e, operation="get_user_status", table="users", user_id=str(id))
+        await db.rollback()
+        raise DatabaseException("Ошибка при получении статуса пользователя")
+
+
+@router.get("/me", response_model=UserRead)
+async def get_current_user(user=Depends(current_active_user), db: AsyncSession = Depends(get_db)):
+    """
+    Получить информацию о текущем пользователе, включая Telegram ID
+    """
+    try:
+        user_service = UserService(db)
+        user_data = await user_service.get_by_id(user.id)
+        if not user_data:
+            raise UserNotFoundException(f"Пользователь с ID {user.id} не найден")
+        return UserRead.model_validate(user_data)
+    except UserNotFoundException:
+        raise
+    except Exception as e:
+        log_db_error(e, operation="get_current_user", table="users", user_id=str(user.id))
+        await db.rollback()
+        raise DatabaseException("Ошибка при получении информации о пользователе")
+
+
+@router.get("/me/telegram", response_model=dict)
+async def get_telegram_info(user=Depends(current_active_user), db: AsyncSession = Depends(get_db)):
+    """
+    Получить информацию о привязанном Telegram аккаунте пользователя
+    """
+    try:
+        if not user.telegram_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Telegram аккаунт не привязан к пользователю"
+            )
+        return {"telegram_id": user.telegram_id, "user_id": user.id, "email": user.email}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_db_error(e, operation="get_telegram_info", table="users", user_id=str(user.id))
+        await db.rollback()
+        raise DatabaseException("Ошибка при получении информации о Telegram аккаунте")
+
+
+@router.put("/me", response_model=UserRead)
+async def update_current_user(
+    user_update: UserUpdate, user=Depends(current_active_user), db: AsyncSession = Depends(get_db)
+):
+    """Обновить информацию о текущем пользователе"""
+    try:
+        user_service = UserService(db)
+        updated_user = await user_service.update(user)
+        if not updated_user:
+            raise UserNotFoundException(f"Пользователь с ID {user.id} не найден")
+        return UserRead.model_validate(updated_user)
+    except UserNotFoundException:
+        raise
+    except Exception as e:
+        log_db_error(e, operation="update_current_user", table="users", user_id=str(user.id))
+        await db.rollback()
+        raise DatabaseException("Ошибка при обновлении информации о пользователе")
+
+
+@router.post("/me/telegram", response_model=UserRead)
+async def link_telegram(telegram_id: int, user=Depends(current_active_user), db: AsyncSession = Depends(get_db)):
+    """
+    Привязать Telegram ID к аккаунту пользователя
+
+    - **telegram_id**: ID пользователя в Telegram
+    """
+    try:
+        user_service = UserService(db)
+
+        # Проверка на существующий telegram_id
+        existing_user = await user_service.get_by_telegram_id(telegram_id)
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Этот Telegram ID уже привязан к другому аккаунту"
+            )
+
+        return await user_service.link_telegram(user.id, telegram_id)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        log_db_error(e, operation="link_telegram", table="users", user_id=str(user.id))
+        await db.rollback()
+        raise DatabaseException("Ошибка при привязке Telegram аккаунта")
+
+
+@router.delete("/me/telegram", response_model=UserRead)
+async def unlink_telegram(user=Depends(current_active_user), db: AsyncSession = Depends(get_db)):
+    """
+    Отвязать Telegram ID от аккаунта пользователя
+    """
+    try:
+        if not user.telegram_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Telegram аккаунт не привязан к пользователю"
+            )
+
+        user_service = UserService(db)
+        return await user_service.unlink_telegram(user.id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_db_error(e, operation="unlink_telegram", table="users", user_id=str(user.id))
+        await db.rollback()
+        raise DatabaseException("Ошибка при отвязке Telegram аккаунта")

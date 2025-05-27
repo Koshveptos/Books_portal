@@ -1,31 +1,32 @@
 import logging
-import os
 
 from aiogram import Bot, Dispatcher
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.types import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
-from bot.handlers.common import register_handlers
-from bot.handlers.errors import register_error_handlers
+from ..core.config import settings
+from .handlers import register_handlers
+from .middlewares import register_middlewares
 
-# Создаем экземпляр бота и диспетчера для обработки команд
-API_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
-storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
+logger = logging.getLogger(__name__)
 
-# Настраиваем логирование
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-)
-
-register_handlers(dp)
-register_error_handlers(dp)
+# Инициализация бота и диспетчера
+bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+dp = Dispatcher()
 
 
-# Функция для запуска бота
 async def start_bot():
-    from aiogram import executor
+    """Запуск бота"""
+    try:
+        logger.info("Starting Telegram bot...")
 
-    logging.info("Запуск телеграм бота...")
-    await executor.start_polling(dp, skip_updates=True)
+        # Регистрация обработчиков и middleware
+        register_handlers(dp)
+        register_middlewares(dp)
+
+        # Запуск бота
+        await dp.start_polling(bot)
+
+    except Exception as e:
+        logger.error(f"Error starting Telegram bot: {str(e)}")
+        raise

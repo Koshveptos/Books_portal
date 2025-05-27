@@ -14,6 +14,7 @@ class RecommendationType(str, Enum):
     AUTHOR = "author"
     CATEGORY = "category"
     TAG = "tag"
+    RANDOM = "random"
 
 
 class SimilarUser(BaseModel):
@@ -30,12 +31,16 @@ class BookRecommendation(BaseModel):
     """Модель рекомендации книги"""
 
     id: int = Field(..., description="ID книги")
+    book_id: int = Field(..., description="ID книги (дублирует id для совместимости)")
     title: str = Field(..., description="Название книги")
     author: str = Field(..., description="Автор книги")
+    author_names: List[str] = Field(default_factory=list, description="Список авторов книги")
     category: Optional[str] = Field(None, description="Категория книги")
-    year: Optional[str] = Field(None, description="Год издания")
+    year: Optional[int] = Field(None, description="Год издания")
+    cover: Optional[str] = Field(None, description="URL обложки книги")
     rating: Optional[float] = Field(None, description="Средний рейтинг книги")
     score: float = Field(..., description="Оценка релевантности рекомендации")
+    reason: str = Field(..., description="Причина рекомендации")
     recommendation_type: RecommendationType = Field(..., description="Тип рекомендации")
     similar_users: List[SimilarUser] = Field(
         default_factory=list, description="Похожие пользователи (для коллаборативной фильтрации)"

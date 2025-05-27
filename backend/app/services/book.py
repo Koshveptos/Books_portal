@@ -89,7 +89,12 @@ class BookService:
             sort_by: Поле для сортировки
             sort_order: Порядок сортировки (asc/desc)
         """
-        query = select(Book).options(
+        # Базовый запрос с подзапросом для среднего рейтинга
+        avg_rating_subq = (
+            select(func.avg(Rating.rating).label("avg_rating")).where(Rating.book_id == Book.id).scalar_subquery()
+        )
+
+        query = select(Book, avg_rating_subq.label("avg_rating")).options(
             selectinload(Book.authors),
             selectinload(Book.categories),
             selectinload(Book.tags),
@@ -111,7 +116,7 @@ class BookService:
             query = query.join(Book.tags).where(Tag.id == tag_id)
 
         if min_rating is not None:
-            query = query.where(Book.rating >= min_rating)
+            query = query.having(avg_rating_subq >= min_rating)
 
         if min_year is not None:
             query = query.where(Book.year >= min_year)
@@ -121,13 +126,13 @@ class BookService:
 
         # Применяем сортировку
         if sort_by == "rating":
-            sort_column = Book.rating
+            sort_column = avg_rating_subq
         elif sort_by == "year":
             sort_column = Book.year
         elif sort_by == "title":
             sort_column = Book.title
         else:
-            sort_column = Book.rating
+            sort_column = avg_rating_subq
 
         if sort_order == "desc":
             query = query.order_by(desc(sort_column))
@@ -138,7 +143,13 @@ class BookService:
         query = query.offset(skip).limit(limit)
 
         result = await self.db.execute(query)
-        books = result.scalars().all()
+        books_with_ratings = result.all()
+
+        # Преобразуем результаты
+        books = []
+        for book, avg_rating in books_with_ratings:
+            book.rating_book = avg_rating or 0.0
+            books.append(book)
 
         if user_id:
             # Получаем информацию о лайках и избранном для всех книг
@@ -308,7 +319,7 @@ class BookService:
             .join(Rating)
             .group_by(Book.id)
             .having(func.count(Rating.id) >= min_ratings_count)
-            .order_by(desc(Book.rating))
+            .order_by(desc(Book.rating_book))
             .limit(limit)
         )
 
@@ -403,7 +414,7 @@ class BookService:
                     title_desc_query = title_desc_query.where(ratings_count_subq >= min_ratings_count)
 
                 # Выполняем запрос с сортировкой по рейтингу
-                result = await self.db.execute(title_desc_query.order_by(desc(Book.rating)).limit(limit))
+                result = await self.db.execute(title_desc_query.order_by(desc(Book.rating_book)).limit(limit))
                 title_desc_books = list(result.scalars().all())
                 logger.info(f"Найдено {len(title_desc_books)} книг по названию и описанию")
 
@@ -430,7 +441,9 @@ class BookService:
                         author_query = author_query.where(ratings_count_subq >= min_ratings_count)
 
                     # Выполняем запрос с сортировкой по рейтингу
-                    result = await self.db.execute(author_query.order_by(desc(Book.rating)).limit(limit - len(results)))
+                    result = await self.db.execute(
+                        author_query.order_by(desc(Book.rating_book)).limit(limit - len(results))
+                    )
                     author_books = list(result.scalars().all())
                     logger.info(f"Найдено {len(author_books)} книг по авторам")
 
@@ -444,7 +457,9 @@ class BookService:
                     logger.error(f"Ошибка при поиске по авторам: {str(e)}", exc_info=True)
 
             # Сортируем объединенные результаты
-            results = sorted(results, key=lambda book: book.rating if book.rating else 0, reverse=True)[:limit]
+            results = sorted(results, key=lambda book: book.rating_book if book.rating_book else 0, reverse=True)[
+                :limit
+            ]
             logger.info(f"Итоговое количество найденных книг: {len(results)}")
 
             # Добавляем информацию о лайках и избранном, если указан user_id
@@ -529,8 +544,13 @@ class BookService:
         Returns:
             Список книг, относящихся к указанной категории
         """
+        # Подзапрос для среднего рейтинга
+        avg_rating_subq = (
+            select(func.avg(Rating.rating).label("avg_rating")).where(Rating.book_id == Book.id).scalar_subquery()
+        )
+
         query = (
-            select(Book)
+            select(Book, avg_rating_subq.label("avg_rating"))
             .join(Book.categories)
             .where(Category.id == category_id)
             .options(
@@ -539,12 +559,18 @@ class BookService:
                 selectinload(Book.tags),
                 selectinload(Book.ratings),
             )
-            .order_by(desc(Book.rating))
+            .order_by(desc(avg_rating_subq))
             .limit(limit)
         )
 
         result = await self.db.execute(query)
-        books = list(result.scalars().all())
+        books_with_ratings = result.all()
+
+        # Преобразуем результаты
+        books = []
+        for book, avg_rating in books_with_ratings:
+            book.rating_book = avg_rating or 0.0
+            books.append(book)
 
         # Добавляем информацию о лайках и избранном, если указан user_id
         if user_id:
@@ -592,7 +618,7 @@ class BookService:
                 selectinload(Book.tags),
                 selectinload(Book.ratings),
             )
-            .order_by(desc(Book.rating))
+            .order_by(desc(Book.rating_book))
             .limit(limit)
         )
 
@@ -620,5 +646,188 @@ class BookService:
                 book.favorites_count = favorites_count.scalar() or 0
                 book.is_liked = bool(is_liked.scalar_one_or_none())
                 book.is_favorited = bool(is_favorited.scalar_one_or_none())
+
+        return books
+
+    async def get_user_likes(self, user_id: int, limit: int = 10, skip: int = 0) -> List[Book]:
+        """
+        Получить список книг, которые понравились пользователю.
+
+        Args:
+            user_id: ID пользователя
+            limit: Максимальное количество результатов
+            skip: Количество пропускаемых записей
+
+        Returns:
+            Список книг, которые понравились пользователю
+        """
+        # Подзапрос для среднего рейтинга
+        avg_rating_subq = (
+            select(func.avg(Rating.rating).label("avg_rating")).where(Rating.book_id == Book.id).scalar_subquery()
+        )
+
+        query = (
+            select(Book, avg_rating_subq.label("avg_rating"))
+            .join(likes, Book.id == likes.c.book_id)
+            .where(likes.c.user_id == user_id)
+            .options(
+                selectinload(Book.authors),
+                selectinload(Book.categories),
+                selectinload(Book.tags),
+                selectinload(Book.ratings),
+            )
+            .order_by(desc(avg_rating_subq))
+            .offset(skip)
+            .limit(limit)
+        )
+
+        result = await self.db.execute(query)
+        books_with_ratings = result.all()
+
+        # Преобразуем результаты
+        books = []
+        for book, avg_rating in books_with_ratings:
+            book.rating_book = avg_rating or 0.0
+            book.is_liked = True
+            books.append(book)
+
+        # Добавляем информацию о лайках и избранном
+        for book in books:
+            likes_count = await self.db.execute(
+                select(func.count()).select_from(likes).where(likes.c.book_id == book.id)
+            )
+            favorites_count = await self.db.execute(
+                select(func.count()).select_from(favorites).where(favorites.c.book_id == book.id)
+            )
+            is_favorited = await self.db.execute(
+                select(favorites).where(and_(favorites.c.book_id == book.id, favorites.c.user_id == user_id))
+            )
+
+            book.likes_count = likes_count.scalar() or 0
+            book.favorites_count = favorites_count.scalar() or 0
+            book.is_favorited = bool(is_favorited.scalar_one_or_none())
+
+        return books
+
+    async def get_user_favorites(self, user_id: int, limit: int = 10, skip: int = 0) -> List[Book]:
+        """
+        Получить список книг в избранном пользователя.
+
+        Args:
+            user_id: ID пользователя
+            limit: Максимальное количество результатов
+            skip: Количество пропускаемых записей
+
+        Returns:
+            Список книг в избранном пользователя
+        """
+        # Подзапрос для среднего рейтинга
+        avg_rating_subq = (
+            select(func.avg(Rating.rating).label("avg_rating")).where(Rating.book_id == Book.id).scalar_subquery()
+        )
+
+        query = (
+            select(Book, avg_rating_subq.label("avg_rating"))
+            .join(favorites, Book.id == favorites.c.book_id)
+            .where(favorites.c.user_id == user_id)
+            .options(
+                selectinload(Book.authors),
+                selectinload(Book.categories),
+                selectinload(Book.tags),
+                selectinload(Book.ratings),
+            )
+            .order_by(desc(avg_rating_subq))
+            .offset(skip)
+            .limit(limit)
+        )
+
+        result = await self.db.execute(query)
+        books_with_ratings = result.all()
+
+        # Преобразуем результаты
+        books = []
+        for book, avg_rating in books_with_ratings:
+            book.rating_book = avg_rating or 0.0
+            book.is_favorited = True
+            books.append(book)
+
+        # Добавляем информацию о лайках и избранном
+        for book in books:
+            likes_count = await self.db.execute(
+                select(func.count()).select_from(likes).where(likes.c.book_id == book.id)
+            )
+            favorites_count = await self.db.execute(
+                select(func.count()).select_from(favorites).where(favorites.c.book_id == book.id)
+            )
+            is_liked = await self.db.execute(
+                select(likes).where(and_(likes.c.book_id == book.id, likes.c.user_id == user_id))
+            )
+
+            book.likes_count = likes_count.scalar() or 0
+            book.favorites_count = favorites_count.scalar() or 0
+            book.is_liked = bool(is_liked.scalar_one_or_none())
+
+        return books
+
+    async def get_user_ratings(self, user_id: int, limit: int = 10, skip: int = 0) -> List[tuple[Book, float]]:
+        """
+        Получить список книг с оценками пользователя.
+
+        Args:
+            user_id: ID пользователя
+            limit: Максимальное количество результатов
+            skip: Количество пропускаемых записей
+
+        Returns:
+            Список кортежей (книга, оценка пользователя)
+        """
+        query = (
+            select(Book, Rating.rating)
+            .join(Rating, Book.id == Rating.book_id)
+            .where(Rating.user_id == user_id)
+            .options(
+                selectinload(Book.authors),
+                selectinload(Book.categories),
+                selectinload(Book.tags),
+                selectinload(Book.ratings),
+            )
+            .order_by(desc(Rating.rating))
+            .offset(skip)
+            .limit(limit)
+        )
+
+        result = await self.db.execute(query)
+        books_with_ratings = result.all()
+
+        # Преобразуем результаты
+        books = []
+        for book, user_rating in books_with_ratings:
+            # Вычисляем средний рейтинг
+            avg_rating_query = select(func.avg(Rating.rating)).where(Rating.book_id == book.id)
+            avg_rating_result = await self.db.execute(avg_rating_query)
+            avg_rating = avg_rating_result.scalar() or 0.0
+
+            book.rating_book = avg_rating
+            books.append((book, user_rating))
+
+        # Добавляем информацию о лайках и избранном
+        for book, _ in books:
+            likes_count = await self.db.execute(
+                select(func.count()).select_from(likes).where(likes.c.book_id == book.id)
+            )
+            favorites_count = await self.db.execute(
+                select(func.count()).select_from(favorites).where(favorites.c.book_id == book.id)
+            )
+            is_liked = await self.db.execute(
+                select(likes).where(and_(likes.c.book_id == book.id, likes.c.user_id == user_id))
+            )
+            is_favorited = await self.db.execute(
+                select(favorites).where(and_(favorites.c.book_id == book.id, favorites.c.user_id == user_id))
+            )
+
+            book.likes_count = likes_count.scalar() or 0
+            book.favorites_count = favorites_count.scalar() or 0
+            book.is_liked = bool(is_liked.scalar_one_or_none())
+            book.is_favorited = bool(is_favorited.scalar_one_or_none())
 
         return books

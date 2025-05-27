@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -27,6 +28,7 @@ from routers.search import router as search_router
 from routers.tags import router as tags_router
 from routers.user import router as users_router
 
+from app.bot.run_bot import run_bot
 from app.core.config import settings
 from app.core.exceptions import BookPortalException
 from app.core.logger_config import (
@@ -43,8 +45,17 @@ logger.setLevel(logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Контекстный менеджер для управления жизненным циклом приложения"""
     logger.info("Application startup...")
+    # Запускаем бота в фоновом режиме
+    bot_task = asyncio.create_task(run_bot())
     yield
+    # Отменяем задачу бота при завершении работы приложения
+    bot_task.cancel()
+    try:
+        await bot_task
+    except asyncio.CancelledError:
+        pass
     logger.info("Application shutdown...")
 
 
@@ -76,10 +87,10 @@ app.include_router(authors_router, prefix="/authors", tags=["authors"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])
 app.include_router(tags_router, prefix="/tags", tags=["tags"])
 app.include_router(search_router, prefix="/search", tags=["search"])
-app.include_router(recommendations_router)
-app.include_router(likes_router)
-app.include_router(favorites_router)
-app.include_router(ratings_router)
+app.include_router(recommendations_router, prefix="/recommendations", tags=["recommendations"])
+app.include_router(likes_router, prefix="/likes", tags=["likes"])
+app.include_router(favorites_router, prefix="/favorites", tags=["favorites"])
+app.include_router(ratings_router, prefix="/ratings", tags=["ratings"])
 
 
 @app.get("/")
