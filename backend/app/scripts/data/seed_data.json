@@ -1,0 +1,846 @@
+{
+  "authors": [
+    {
+      "name": "Фёдор Достоевский"
+    },
+    {
+      "name": "Лев Толстой"
+    },
+    {
+      "name": "Антон Чехов"
+    },
+    {
+      "name": "Джордж Оруэлл"
+    },
+    {
+      "name": "Рэй Брэдбери"
+    },
+    {
+      "name": "Михаил Булгаков"
+    },
+    {
+      "name": "Александр Пушкин"
+    },
+    {
+      "name": "Николай Гоголь"
+    },
+    {
+      "name": "Иван Тургенев"
+    },
+    {
+      "name": "Эрнест Хемингуэй"
+    },
+    {
+      "name": "Франц Кафка"
+    },
+    {
+      "name": "Джек Лондон"
+    },
+    {
+      "name": "Марк Твен"
+    },
+    {
+      "name": "Артур Конан Дойль"
+    },
+    {
+      "name": "Агата Кристи"
+    },
+    {
+      "name": "Герман Мелвилл"
+    },
+    {
+      "name": "Чарльз Диккенс"
+    },
+    {
+      "name": "Дж. К. Роулинг"
+    },
+    {
+      "name": "Уильям Голдинг"
+    },
+    {
+      "name": "Маргарет Митчелл"
+    },
+    {
+      "name": "Александр Дюма"
+    },
+    {
+      "name": "Иоганн Вольфганг Гёте"
+    },
+    {
+      "name": "Антуан де Сент-Экзюпери"
+    },
+    {
+      "name": "Дж. Д. Сэлинджер"
+    },
+    {
+      "name": "Михаил Лермонтов"
+    }
+  ],
+  "categories": [
+    {
+      "name_categories": "Классическая литература",
+      "description": "Произведения, признанные классикой мировой литературы"
+    },
+    {
+      "name_categories": "Фантастика",
+      "description": "Научная фантастика, фэнтези и другие жанры фантастической литературы"
+    },
+    {
+      "name_categories": "Детективы",
+      "description": "Детективные романы и повести"
+    },
+    {
+      "name_categories": "Психологическая проза",
+      "description": "Произведения, исследующие психологию человека"
+    },
+    {
+      "name_categories": "Исторические романы",
+      "description": "Художественные произведения на историческую тематику"
+    },
+    {
+      "name_categories": "Поэзия",
+      "description": "Стихотворные произведения"
+    },
+    {
+      "name_categories": "Драматургия",
+      "description": "Пьесы и драматические произведения"
+    },
+    {
+      "name_categories": "Приключения",
+      "description": "Приключенческая литература"
+    },
+    {
+      "name_categories": "Философская литература",
+      "description": "Произведения философской направленности"
+    }
+  ],
+  "tags": [
+    {
+      "name_tag": "Русская классика"
+    },
+    {
+      "name_tag": "Антиутопия"
+    },
+    {
+      "name_tag": "Психологический роман"
+    },
+    {
+      "name_tag": "Философская проза"
+    },
+    {
+      "name_tag": "Социальная драма"
+    },
+    {
+      "name_tag": "Научная фантастика"
+    },
+    {
+      "name_tag": "Исторический роман"
+    },
+    {
+      "name_tag": "Повесть"
+    },
+    {
+      "name_tag": "Рассказ"
+    },
+    {
+      "name_tag": "Роман"
+    },
+    {
+      "name_tag": "Поэма"
+    },
+    {
+      "name_tag": "Комедия"
+    },
+    {
+      "name_tag": "Трагедия"
+    },
+    {
+      "name_tag": "Приключения"
+    },
+    {
+      "name_tag": "Детектив"
+    },
+    {
+      "name_tag": "Мистика"
+    }
+  ],
+  "books": [
+    {
+      "title": "Преступление и наказание",
+      "description": "Роман о нравственных последствиях преступления и возможности искупления вины через страдание.",
+      "year": "1866",
+      "publisher": "Русский вестник",
+      "isbn": "978-5-389-12345-1",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/commons/f/f2/Crimeandpunishmentcover.png",
+      "file_url": "https://www.gutenberg.org/files/2554/2554-h/2554-h.htm",
+      "authors": [
+        1
+      ],
+      "categories": [
+        1,
+        4
+      ],
+      "tags": [
+        1,
+        3,
+        4,
+        10
+      ]
+    },
+    {
+      "title": "Война и мир",
+      "description": "Эпический роман, описывающий русское общество в эпоху войн против Наполеона.",
+      "year": "1869",
+      "publisher": "Русский вестник",
+      "isbn": "978-5-389-12346-2",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/commons/f/fb/War_and_Peace_book.JPG",
+      "file_url": "https://www.gutenberg.org/files/2600/2600-h/2600-h.htm",
+      "authors": [
+        2
+      ],
+      "categories": [
+        1,
+        5
+      ],
+      "tags": [
+        1,
+        7,
+        10
+      ]
+    },
+    {
+      "title": "Вишнёвый сад",
+      "description": "Пьеса о гибели дворянских гнёзд и приходе новой эпохи.",
+      "year": "1904",
+      "publisher": "Знание",
+      "isbn": "978-5-389-12347-3",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/commons/6/6e/The_Cherry_Orchard_MAT.jpg",
+      "file_url": "https://ugralit.okrlib.ru/sites/default/files/fulltext/vishnevyi_sad.pdf",
+      "authors": [
+        3
+      ],
+      "categories": [
+        7
+      ],
+      "tags": [
+        1,
+        5,
+        8
+      ]
+    },
+    {
+      "title": "1984",
+      "description": "Антиутопический роман о тоталитарном обществе и контроле над мыслями.",
+      "year": "1949",
+      "publisher": "Secker & Warburg",
+      "isbn": "978-5-389-12348-4",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/en/c/c3/1984first.jpg",
+      "file_url": "https://archive.org/download/NineteenEightyFour-Novel-GeorgeOrwell/orwell1984.pdf",
+      "authors": [
+        4
+      ],
+      "categories": [
+        2
+      ],
+      "tags": [
+        2,
+        6,
+        10
+      ]
+    },
+    {
+      "title": "451 градус по Фаренгейту",
+      "description": "Антиутопический роман о будущем, где книги находятся под запретом.",
+      "year": "1953",
+      "publisher": "Ballantine Books",
+      "isbn": "978-5-389-12349-5",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/en/d/db/Fahrenheit_451_1st_ed_cover.jpg",
+      "file_url": "https://archive.org/download/calibre_library_68.132.22.122.231/Fahrenheit%20451%20-%20Ray%20Bradbury_162.pdf",
+      "authors": [
+        5
+      ],
+      "categories": [
+        2
+      ],
+      "tags": [
+        2,
+        6,
+        10
+      ]
+    },
+    {
+      "title": "Идиот",
+      "description": "Роман о князе Мышкине, олицетворяющем христианскую добродетель.",
+      "year": "1869",
+      "publisher": "Русский вестник",
+      "isbn": "978-5-389-12350-6",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/commons/3/33/The_Idiot_by_Dostoevsky.jpg",
+      "file_url": "https://az.lib.ru/d/dostoewskij_f_m/text_0070.shtml",
+      "authors": [
+        1
+      ],
+      "categories": [
+        1,
+        4
+      ],
+      "tags": [
+        1,
+        3,
+        4,
+        10
+      ]
+    },
+    {
+      "title": "Анна Каренина",
+      "description": "Роман о трагической любви замужней женщины к блестящему офицеру.",
+      "year": "1877",
+      "publisher": "Русский вестник",
+      "isbn": "978-5-389-12351-7",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/commons/7/74/AnnaKareninaTitle.jpg",
+      "file_url": "https://www.gutenberg.org/files/1399/1399-h/1399-h.htm",
+      "authors": [
+        2
+      ],
+      "categories": [
+        1,
+        4
+      ],
+      "tags": [
+        1,
+        3,
+        5,
+        10
+      ]
+    },
+    {
+      "title": "Скотный двор",
+      "description": "Аллегорическая повесть о революции и тоталитаризме.",
+      "year": "1945",
+      "publisher": "Secker & Warburg",
+      "isbn": "978-5-389-12352-8",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/en/c/c8/Animal_Farm_-_1st_edition.jpg",
+      "file_url": "https://ia601308.us.archive.org/28/items/AnimalFarmByGeorgeOrwell/Animal%20Farm%20by%20George%20Orwell.pdf",
+      "authors": [
+        4
+      ],
+      "categories": [
+        2
+      ],
+      "tags": [
+        2,
+        5,
+        8
+      ]
+    },
+    {
+      "title": "Мастер и Маргарита",
+      "description": "Роман о добре и зле, любви и предательстве, о вечных ценностях.",
+      "year": "1967",
+      "publisher": "ИМЛИ РАН",
+      "isbn": "978-5-389-12353-9",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/commons/b/b9/Master_and_Margarita_cover.jpg",
+      "file_url": "https://az.lib.ru/b/bulgakow_m_a/text_0040.shtml",
+      "authors": [
+        6
+      ],
+      "categories": [
+        1,
+        2
+      ],
+      "tags": [
+        1,
+        4,
+        10
+      ]
+    },
+    {
+      "title": "Евгений Онегин",
+      "description": "Роман в стихах о любви и судьбе главного героя.",
+      "year": "1833",
+      "publisher": "Типография Глазунова",
+      "isbn": "978-5-389-12354-0",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/commons/2/2b/Eugene_Onegin_cover.jpg",
+      "file_url": "https://www.gutenberg.org/files/23997/23997-h/23997-h.htm",
+      "authors": [
+        7
+      ],
+      "categories": [
+        1,
+        6
+      ],
+      "tags": [
+        1,
+        11
+      ]
+    },
+    {
+      "title": "Мёртвые души",
+      "description": "Поэма о путешествии Чичикова по России и его сделках с помещиками.",
+      "year": "1842",
+      "publisher": "Московский наблюдатель",
+      "isbn": "978-5-389-12355-1",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/commons/4/47/Dead_Souls_cover.jpg",
+      "file_url": "https://az.lib.ru/g/gogolx_n_w/text_0010.shtml",
+      "authors": [
+        8
+      ],
+      "categories": [
+        1
+      ],
+      "tags": [
+        1,
+        7,
+        11
+      ]
+    },
+    {
+      "title": "Ревизор",
+      "description": "Комедия о чиновниках, принявших проезжего за ревизора.",
+      "year": "1836",
+      "publisher": "Типография Глазунова",
+      "isbn": "978-5-389-12356-2",
+      "language": "RU",
+      "cover": "https://upload.wikimedia.org/wikipedia/commons/5/5c/The_Inspector_General_cover.jpg",
+      "file_url": "https://az.lib.ru/g/gogolx_n_w/text_0030.shtml",
+      "authors": [
+        8
+      ],
+      "categories": [
+        7
+      ],
+      "tags": [
+        1,
+        12
+      ]
+    },
+    {
+      "title": "Братья Карамазовы",
+      "description": "Роман о конфликте поколений, вере и неверии, любви и ненависти.",
+      "year": "1880",
+      "publisher": "Русский вестник",
+      "isbn": "978-5-389-12357-3",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9785170801244-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/28054.kindle.noimages",
+      "authors": [
+        1
+      ],
+      "categories": [
+        1,
+        4
+      ],
+      "tags": [
+        1,
+        3,
+        4,
+        10
+      ]
+    },
+    {
+      "title": "Отцы и дети",
+      "description": "Роман о конфликте между старым и новым поколением в России XIX века.",
+      "year": "1862",
+      "publisher": "Русский вестник",
+      "isbn": "978-5-389-12358-0",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9785170801251-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/30723.kindle.noimages",
+      "authors": [
+        9
+      ],
+      "categories": [
+        1,
+        4
+      ],
+      "tags": [
+        1,
+        3,
+        5,
+        10
+      ]
+    },
+    {
+      "title": "Собачье сердце",
+      "description": "Сатирическая повесть о научном эксперименте и его социальных последствиях.",
+      "year": "1925",
+      "publisher": "Недра",
+      "isbn": "978-5-389-12359-7",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9785170801268-M.jpg",
+      "file_url": "https://archive.org/download/heartofadog/heart_of_a_dog.pdf",
+      "authors": [
+        6
+      ],
+      "categories": [
+        1,
+        2
+      ],
+      "tags": [
+        1,
+        6,
+        8
+      ]
+    },
+    {
+      "title": "Капитанская дочка",
+      "description": "Исторический роман о любви и долге на фоне Пугачёвского восстания.",
+      "year": "1836",
+      "publisher": "Современник",
+      "isbn": "978-5-389-12360-3",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9785170801275-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/5312.kindle.noimages",
+      "authors": [
+        7
+      ],
+      "categories": [
+        1,
+        5
+      ],
+      "tags": [
+        1,
+        7,
+        10
+      ]
+    },
+    {
+      "title": "Дама с собачкой",
+      "description": "Рассказ о мимолётной любви, изменившей жизнь героев.",
+      "year": "1899",
+      "publisher": "Русская мысль",
+      "isbn": "978-5-389-12361-0",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9785170801282-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/13415.kindle.noimages",
+      "authors": [
+        3
+      ],
+      "categories": [
+        1,
+        4
+      ],
+      "tags": [
+        1,
+        9
+      ]
+    },
+    {
+      "title": "Шинель",
+      "description": "Повесть о маленьком человеке и его трагической судьбе.",
+      "year": "1842",
+      "publisher": "Отечественные записки",
+      "isbn": "978-5-389-12362-7",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9785170801299-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/13414.kindle.noimages",
+      "authors": [
+        8
+      ],
+      "categories": [
+        1
+      ],
+      "tags": [
+        1,
+        8,
+        9
+      ]
+    },
+    {
+      "title": "Воскресение",
+      "description": "Роман о духовном пробуждении и поиске справедливости.",
+      "year": "1899",
+      "publisher": "Нива",
+      "isbn": "978-5-389-12363-4",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9785170801305-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/1938.kindle.noimages",
+      "authors": [
+        2
+      ],
+      "categories": [
+        1,
+        4
+      ],
+      "tags": [
+        1,
+        3,
+        4,
+        10
+      ]
+    },
+    {
+      "title": "Записки из подполья",
+      "description": "Философская повесть о внутреннем конфликте и свободе воли.",
+      "year": "1864",
+      "publisher": "Эпоха",
+      "isbn": "978-5-389-12364-1",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9785170801312-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/600.kindle.noimages",
+      "authors": [
+        1
+      ],
+      "categories": [
+        1,
+        4
+      ],
+      "tags": [
+        1,
+        3,
+        4,
+        8
+      ]
+    },
+    {
+      "title": "Нос",
+      "description": "Сатирический рассказ о бюрократии и абсурде.",
+      "year": "1836",
+      "publisher": "Современник",
+      "isbn": "978-5-389-12365-8",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9785170801329-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/13413.kindle.noimages",
+      "authors": [
+        8
+      ],
+      "categories": [
+        1
+      ],
+      "tags": [
+        1,
+        9,
+        12
+      ]
+    },
+    {
+      "title": "Старик и море",
+      "description": "Повесть о старом рыбаке, его борьбе с гигантской рыбой и морем.",
+      "year": "1952",
+      "publisher": "Charles Scribner's Sons",
+      "isbn": "978-5-389-12366-5",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9780684801223-M.jpg",
+      "file_url": "https://archive.org/download/theoldmanandsea/TheOldManAndTheSea.pdf",
+      "authors": [
+        10
+      ],
+      "categories": [
+        1,
+        8
+      ],
+      "tags": [
+        8,
+        10
+      ]
+    },
+    {
+      "title": "Процесс",
+      "description": "Роман о человеке, арестованном и судимом таинственной организацией.",
+      "year": "1925",
+      "publisher": "Verlag Die Schmiede",
+      "isbn": "978-5-389-12367-2",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9780141182902-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/7849.kindle.noimages",
+      "authors": [
+        11
+      ],
+      "categories": [
+        1,
+        9
+      ],
+      "tags": [
+        3,
+        4,
+        10
+      ]
+    },
+    {
+      "title": "Мартин Иден",
+      "description": "Роман о самоучке, который становится известным писателем.",
+      "year": "1909",
+      "publisher": "Macmillan Publishers",
+      "isbn": "978-5-389-12368-9",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9780140187724-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/1056.kindle.noimages",
+      "authors": [
+        12
+      ],
+      "categories": [
+        1,
+        8
+      ],
+      "tags": [
+        3,
+        10
+      ]
+    },
+    {
+      "title": "Приключения Гекльберри Финна",
+      "description": "Роман о приключениях мальчика и беглого раба по реке Миссисипи.",
+      "year": "1884",
+      "publisher": "Chatto & Windus",
+      "isbn": "978-5-389-12369-6",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9780141439648-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/76.kindle.noimages",
+      "authors": [
+        13
+      ],
+      "categories": [
+        1,
+        8
+      ],
+      "tags": [
+        8,
+        10,
+        14
+      ]
+    },
+    {
+      "title": "Шерлок Холмс: Собака Баскервилей",
+      "description": "Детектив о расследовании таинственной смерти сэра Чарльза Баскервиля.",
+      "year": "1902",
+      "publisher": "George Newnes",
+      "isbn": "978-5-389-12370-2",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9780140437867-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/2852.kindle.noimages",
+      "authors": [
+        14
+      ],
+      "categories": [
+        3
+      ],
+      "tags": [
+        10,
+        15
+      ]
+    },
+    {
+      "title": "Убийство в Восточном экспрессе",
+      "description": "Детектив Эркюля Пуаро о загадочном убийстве в поезде.",
+      "year": "1934",
+      "publisher": "Collins Crime Club",
+      "isbn": "978-5-389-12371-9",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9780007119318-M.jpg",
+      "file_url": "https://archive.org/download/murderontheorientexpress/MurderOnTheOrientExpress.pdf",
+      "authors": [
+        15
+      ],
+      "categories": [
+        3
+      ],
+      "tags": [
+        10,
+        15
+      ]
+    },
+    {
+      "title": "Моби Дик",
+      "description": "Роман о китобое Ахаве и его одержимости белым китом.",
+      "year": "1851",
+      "publisher": "Harper & Brothers",
+      "isbn": "978-5-389-12372-6",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9780142437247-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/2701.kindle.noimages",
+      "authors": [
+        16
+      ],
+      "categories": [
+        1,
+        8
+      ],
+      "tags": [
+        7,
+        10
+      ]
+    },
+    {
+      "title": "Оливер Твист",
+      "description": "Роман о сироте, который попадает в лондонский криминальный мир.",
+      "year": "1838",
+      "publisher": "Richard Bentley",
+      "isbn": "978-5-389-12373-3",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9780141439747-M.jpg",
+      "file_url": "https://www.gutenberg.org/ebooks/730.kindle.noimages",
+      "authors": [
+        17
+      ],
+      "categories": [
+        1,
+        5
+      ],
+      "tags": [
+        5,
+        10
+      ]
+    },
+    {
+      "title": "Гарри Поттер и философский камень",
+      "description": "Первая книга о приключениях юного волшебника Гарри Поттера.",
+      "year": "1997",
+      "publisher": "Bloomsbury",
+      "isbn": "978-5-389-12374-0",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9780747532699-M.jpg",
+      "file_url": "https://archive.org/download/harrypotterandthephilosophersstone/HarryPotterAndThePhilosophersStone.pdf",
+      "authors": [
+        18
+      ],
+      "categories": [
+        2
+      ],
+      "tags": [
+        6,
+        10
+      ]
+    },
+    {
+      "title": "Повелитель мух",
+      "description": "Роман о группе мальчиков, оказавшихся на необитаемом острове.",
+      "year": "1954",
+      "publisher": "Faber & Faber",
+      "isbn": "978-5-389-12375-7",
+      "language": "RU",
+      "cover": "https://covers.openlibrary.org/b/isbn/9780571191475-M.jpg",
+      "file_url": "https://archive.org/download/lordoftheflies/LordOfTheFlies.pdf",
+      "authors": [
+        19
+      ],
+      "categories": [
+        2,
+        4
+      ],
+      "tags": [
+        2,
+        10
+      ]
+    }
+  ],
+  "users": [
+    {
+      "email": "admin0000@example.com",
+      "password": "string",
+      "is_active": true,
+      "is_superuser": false,
+      "is_verified": false,
+      "is_moderator": false
+    }
+  ]
+}
