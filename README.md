@@ -194,50 +194,6 @@ isort .
 
 ---
 
-## 🤖 Интеграция с Telegram
-
-1. Создайте бота через [@BotFather](https://t.me/BotFather)
-2. Укажите токен в `.env` файле:
-
-```env
-TELEGRAM_BOT_TOKEN=your_token_here
-```
-
-3. Установите webhook:
-
-```bash
-curl -X POST "http://localhost:8000/api/v1/telegram/set_webhook?url=https://your-domain.com/api/v1/telegram/webhook"
-```
-
----
-
-## 🐳 Docker команды
-
-### Просмотр логов
-
-```bash
-docker-compose logs -f backend
-```
-
-### Остановка сервисов
-
-```bash
-docker-compose down
-```
-
-### Полная очистка
-
-```bash
-docker-compose down -v
-```
-
-### Доступ к базе данных
-
-```bash
-docker-compose exec db psql -U your_user -d books_db
-```
-
----
 
 
 ## 📄 Лицензия
