@@ -92,7 +92,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, int]):
         """
         logger.info(f"User {user.id} has registered.")
         # Автоматически делаем нового пользователя модератором для тестирования
-        # ВАЖНО: В продакшне это нужно убрать!
+   
         user_dict = {"is_moderator": True}
         await self.user_db.update(user, user_dict)
 
