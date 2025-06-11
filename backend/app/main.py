@@ -27,6 +27,7 @@ from routers.recommendations import router as recommendations_router
 from routers.search import router as search_router
 from routers.tags import router as tags_router
 from routers.user import router as users_router
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.bot.run_bot import run_bot
 from app.core.config import settings
@@ -244,6 +245,51 @@ async def too_many_requests_exception_handler(request: Request, exc: Exception):
         content={
             "error_code": "too_many_requests",
             "message": "Слишком много запросов",
+            "path": request.url.path,
+            "timestamp": time.time(),
+        },
+    )
+
+
+# Обработчик ошибок базы данных
+@app.exception_handler(SQLAlchemyError)
+async def database_exception_handler(request: Request, exc: SQLAlchemyError):
+    """Обработчик ошибок базы данных"""
+    if isinstance(exc, IntegrityError):
+        if "users_email_key" in str(exc) or "ix_users_email" in str(exc):
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={
+                    "error_code": "duplicate_email",
+                    "message": "Пользователь с таким email уже существует",
+                    "path": request.url.path,
+                    "timestamp": time.time(),
+                },
+            )
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "error_code": "integrity_error",
+                "message": "Ошибка целостности данных",
+                "path": request.url.path,
+                "timestamp": time.time(),
+            },
+        )
+
+    log_critical_error(
+        error=exc,
+        component="database",
+        context={
+            "method": request.method,
+            "url": str(request.url),
+            "client": request.client.host if request.client else "Unknown",
+        },
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error_code": "database_error",
+            "message": "Ошибка базы данных",
             "path": request.url.path,
             "timestamp": time.time(),
         },

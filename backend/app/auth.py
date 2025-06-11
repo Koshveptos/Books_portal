@@ -110,12 +110,21 @@ class UserManager(BaseUserManager[User, int]):
                 logger.info(f"User registration completed: {created_user.email}")
                 return created_user
             except IntegrityError as e:
-                if "ix_users_email" in str(e):
+                if "users_email_key" in str(e) or "ix_users_email" in str(e):
                     logger.warning(f"Attempt to register with existing email: {user_dict['email']}")
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT, detail="Пользователь с таким email уже существует"
                     )
-                raise
+                logger.error(f"Database integrity error during user creation: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Ошибка целостности данных при создании пользователя",
+                )
+            except Exception as e:
+                logger.error(f"Unexpected error during user creation: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка при создании пользователя"
+                )
         except HTTPException:
             raise
         except Exception as e:

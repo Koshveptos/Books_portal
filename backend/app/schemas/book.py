@@ -105,7 +105,7 @@ class BookResponse(BookBase):
     authors: List[AuthorResponse] = Field(default_factory=list)
     categories: List[CategoryResponse] = Field(default_factory=list)
     tags: List[TagResponse] = Field(default_factory=list)
-    language: Language
+    language: str = Field(description="Book language, 'ru' or 'en'")
     model_config = ConfigDict(from_attributes=True)
 
 

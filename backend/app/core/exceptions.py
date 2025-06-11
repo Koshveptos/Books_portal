@@ -307,3 +307,11 @@ class ExternalAPITimeoutException(BookPortalException):
     status_code = status.HTTP_504_GATEWAY_TIMEOUT
     error_code = "external_api_timeout"
     message = "Превышено время ожидания ответа от внешнего API"
+
+
+class ResourceNotFoundException(BookPortalException):
+    """Ресурс не найден"""
+
+    status_code = status.HTTP_404_NOT_FOUND
+    error_code = "resource_not_found"
+    message = "Запрашиваемый ресурс не найден"

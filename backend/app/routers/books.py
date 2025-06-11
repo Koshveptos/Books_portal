@@ -18,16 +18,21 @@ from schemas.book import (
 )
 from sqlalchemy import select
 from sqlalchemy.engine import Result
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.exceptions import (
+    AuthorNotFoundException,
     BookNotFoundException,
+    CategoryNotFoundException,
     DatabaseException,
     InvalidBookDataException,
+    InvalidCategoryDataException,
+    InvalidTagDataException,
     PermissionDeniedException,
+    ResourceNotFoundException,
 )
 from app.core.logger_config import (
     log_db_error,
@@ -63,23 +68,30 @@ async def get_books(
         # Преобразуем книги в модели Pydantic, проверяя, что все связи загружены
         book_responses = []
         for book in books:
-            if not (hasattr(book, "authors") and hasattr(book, "categories") and hasattr(book, "tags")):
-                book_id = book.id
-                query = (
-                    select(Book)
-                    .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
-                    .where(Book.id == book_id)
-                )
-                result = await db.execute(query)
-                book = result.scalar_one()
+            try:
+                if not (hasattr(book, "authors") and hasattr(book, "categories") and hasattr(book, "tags")):
+                    book_id = book.id
+                    query = (
+                        select(Book)
+                        .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
+                        .where(Book.id == book_id)
+                    )
+                    result = await db.execute(query)
+                    book = result.scalar_one()
 
-            book_responses.append(BookResponse.model_validate(book))
+                book_responses.append(BookResponse.model_validate(book))
+            except Exception as e:
+                log_db_error(e, operation="get_books_validation", table="books", book_id=str(book.id))
+                continue  # Пропускаем книгу с ошибкой валидации
 
         log_info(f"Successfully retrieved {len(book_responses)} books")
         return book_responses
+    except SQLAlchemyError as e:
+        log_db_error(e, operation="get_all_books", table="books")
+        raise DatabaseException("Ошибка при получении списка книг из базы данных")
     except Exception as e:
         log_db_error(e, operation="get_all_books", table="books")
-        raise DatabaseException("Ошибка при получении списка книг")
+        raise DatabaseException("Непредвиденная ошибка при получении списка книг")
 
 
 @router.get("/{book_id}", response_model=BookResponse)
@@ -108,9 +120,12 @@ async def get_book(
         return BookResponse.model_validate(book)
     except BookNotFoundException:
         raise
+    except SQLAlchemyError as e:
+        log_db_error(e, operation="get_book", table="books", book_id=str(book_id))
+        raise DatabaseException("Ошибка при получении книги из базы данных")
     except Exception as e:
-        log_db_error(e, operation="get_book", table="books")
-        raise DatabaseException("Ошибка при получении книги")
+        log_db_error(e, operation="get_book", table="books", book_id=str(book_id))
+        raise DatabaseException("Непредвиденная ошибка при получении книги")
 
 
 # Добавляем те же роуты к books_router для доступа через прямой URL
@@ -152,7 +167,7 @@ async def create_book(
         if len(authors) != len(book.authors):
             missing_authors = set(book.authors) - set(a.id for a in authors)
             log_validation_error(ValueError(f"Missing authors: {missing_authors}"), model_name="Book", field="authors")
-            raise InvalidBookDataException(f"Авторы {missing_authors} не найдены")
+            raise ResourceNotFoundException(f"Авторы {missing_authors} не найдены")
 
         # Проверка существования категорий
         categories_result = await db.execute(select(Category).where(Category.id.in_(book.categories)))
@@ -162,7 +177,7 @@ async def create_book(
             log_validation_error(
                 ValueError(f"Missing categories: {missing_categories}"), model_name="Book", field="categories"
             )
-            raise InvalidBookDataException(f"Категории {missing_categories} не найдены")
+            raise ResourceNotFoundException(f"Категории {missing_categories} не найдены")
 
         # Проверка существования тегов
         tags_result = await db.execute(select(Tag).where(Tag.id.in_(book.tags)))
@@ -170,39 +185,52 @@ async def create_book(
         if len(tags) != len(book.tags):
             missing_tags = set(book.tags) - set(t.id for t in tags)
             log_validation_error(ValueError(f"Missing tags: {missing_tags}"), model_name="Book", field="tags")
-            raise InvalidBookDataException(f"Теги {missing_tags} не найдены")
+            raise ResourceNotFoundException(f"Теги {missing_tags} не найдены")
 
         # Создание объекта книги
         book_dict = book.model_dump(exclude={"authors", "categories", "tags"})
+        log_info(f"Creating book with data: {book_dict}")
+
         db_book = Book(**book_dict)
         db_book.authors = authors
         db_book.categories = categories
         db_book.tags = tags
 
-        db.add(db_book)
-        await db.commit()
-        await db.refresh(db_book)
+        try:
+            db.add(db_book)
+            await db.commit()
+            await db.refresh(db_book)
+        except IntegrityError as e:
+            await db.rollback()
+            log_db_error(e, operation="create_book", table="books", details=str(e))
+            if "unique constraint" in str(e).lower():
+                raise InvalidBookDataException("Книга с такими данными уже существует")
+            raise InvalidBookDataException(f"Ошибка целостности данных при создании книги: {str(e)}")
+        except SQLAlchemyError as e:
+            await db.rollback()
+            log_db_error(e, operation="create_book", table="books", details=str(e))
+            raise DatabaseException(f"Ошибка при создании книги в базе данных: {str(e)}")
 
         log_info(f"Book created successfully with ID: {db_book.id}")
 
         # Загружаем объект со всеми связями
-        result = await db.execute(
-            select(Book)
-            .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
-            .where(Book.id == db_book.id)
-        )
-        book_with_relations = result.scalar_one()
-        return BookResponse.model_validate(book_with_relations)
-    except (PermissionDeniedException, InvalidBookDataException):
+        try:
+            result = await db.execute(
+                select(Book)
+                .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
+                .where(Book.id == db_book.id)
+            )
+            book_with_relations = result.scalar_one()
+            return BookResponse.model_validate(book_with_relations)
+        except Exception as e:
+            log_db_error(e, operation="create_book_load_relations", table="books", book_id=str(db_book.id))
+            raise DatabaseException("Ошибка при загрузке связей созданной книги")
+    except (PermissionDeniedException, ResourceNotFoundException):
         raise
-    except IntegrityError as e:
-        await db.rollback()
-        log_db_error(e, operation="create_book", table="books")
-        raise InvalidBookDataException("Книга с такими данными уже существует")
     except Exception as e:
         await db.rollback()
-        log_db_error(e, operation="create_book", table="books")
-        raise DatabaseException("Ошибка при создании книги")
+        log_db_error(e, operation="create_book", table="books", details=str(e))
+        raise DatabaseException(f"Непредвиденная ошибка при создании книги: {str(e)}")
 
 
 @router.put("/{book_id}", response_model=BookResponse)
@@ -248,7 +276,7 @@ async def update_book(
                 log_validation_error(
                     ValueError(f"Missing authors: {missing_authors}"), model_name="Book", field="authors"
                 )
-                raise InvalidBookDataException(f"Авторы {missing_authors} не найдены")
+                raise ResourceNotFoundException(f"Авторы {missing_authors} не найдены")
             book.authors = authors
 
         # Обновление категорий
@@ -260,7 +288,7 @@ async def update_book(
                 log_validation_error(
                     ValueError(f"Missing categories: {missing_categories}"), model_name="Book", field="categories"
                 )
-                raise InvalidBookDataException(f"Категории {missing_categories} не найдены")
+                raise ResourceNotFoundException(f"Категории {missing_categories} не найдены")
             book.categories = categories
 
         # Обновление тегов
@@ -270,7 +298,7 @@ async def update_book(
             if len(tags) != len(book_update.tags):
                 missing_tags = set(book_update.tags) - set(t.id for t in tags)
                 log_validation_error(ValueError(f"Missing tags: {missing_tags}"), model_name="Book", field="tags")
-                raise InvalidBookDataException(f"Теги {missing_tags} не найдены")
+                raise ResourceNotFoundException(f"Теги {missing_tags} не найдены")
             book.tags = tags
 
         await db.commit()
@@ -278,16 +306,22 @@ async def update_book(
 
         log_info(f"Book {book_id} updated successfully")
         return BookResponse.model_validate(book)
-    except (PermissionDeniedException, BookNotFoundException, InvalidBookDataException):
+    except (PermissionDeniedException, BookNotFoundException, ResourceNotFoundException):
         raise
     except IntegrityError as e:
         await db.rollback()
         log_db_error(e, operation="update_book", table="books")
+        if "unique constraint" in str(e).lower():
+            raise InvalidBookDataException("Книга с такими данными уже существует")
         raise InvalidBookDataException("Некорректные данные для обновления книги")
+    except SQLAlchemyError as e:
+        await db.rollback()
+        log_db_error(e, operation="update_book", table="books")
+        raise DatabaseException("Ошибка при обновлении книги в базе данных")
     except Exception as e:
         await db.rollback()
         log_db_error(e, operation="update_book", table="books")
-        raise DatabaseException("Ошибка при обновлении книги")
+        raise DatabaseException("Непредвиденная ошибка при обновлении книги")
 
 
 @router.patch("/{book_id}", response_model=BookResponse)
@@ -406,10 +440,14 @@ async def delete_book(
         log_info(f"Book {book_id} deleted successfully")
     except (PermissionDeniedException, BookNotFoundException):
         raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        log_db_error(e, operation="delete_book", table="books", book_id=str(book_id))
+        raise DatabaseException("Ошибка при удалении книги из базы данных")
     except Exception as e:
         await db.rollback()
         log_db_error(e, operation="delete_book", table="books", book_id=str(book_id))
-        raise DatabaseException("Ошибка при удалении книги")
+        raise DatabaseException("Непредвиденная ошибка при удалении книги")
 
 
 @router.post("/category", response_model=CategoryResponse)
@@ -426,7 +464,15 @@ async def create_category(
             log_warning(f"User {user.id} attempted to create category without sufficient permissions")
             raise PermissionDeniedException("Недостаточно прав для создания категории")
 
-        log_info(f"Creating new category: {category.name}")
+        log_info(f"Creating new category: {category.name_categories}")
+
+        # Проверка на существование категории с таким же названием
+        existing_category = await db.execute(
+            select(Category).where(Category.name_categories == category.name_categories)
+        )
+        if existing_category.scalar_one_or_none():
+            log_warning(f"Category with name '{category.name_categories}' already exists")
+            raise InvalidCategoryDataException("Категория с таким названием уже существует")
 
         db_category = Category(**category.model_dump())
         db.add(db_category)
@@ -437,14 +483,20 @@ async def create_category(
         return CategoryResponse.model_validate(db_category)
     except PermissionDeniedException:
         raise
+    except InvalidCategoryDataException:
+        raise
     except IntegrityError as e:
         await db.rollback()
         log_db_error(e, operation="create_category", table="categories")
-        raise InvalidBookDataException("Категория с таким названием уже существует")
+        raise InvalidCategoryDataException("Ошибка целостности данных при создании категории")
+    except SQLAlchemyError as e:
+        await db.rollback()
+        log_db_error(e, operation="create_category", table="categories")
+        raise DatabaseException("Ошибка при создании категории в базе данных")
     except Exception as e:
         await db.rollback()
         log_db_error(e, operation="create_category", table="categories")
-        raise DatabaseException("Ошибка при создании категории")
+        raise DatabaseException("Непредвиденная ошибка при создании категории")
 
 
 @router.post("/tag", response_model=TagResponse)
@@ -461,7 +513,13 @@ async def create_tag(
             log_warning(f"User {user.id} attempted to create tag without sufficient permissions")
             raise PermissionDeniedException("Недостаточно прав для создания тега")
 
-        log_info(f"Creating new tag: {tag.name}")
+        log_info(f"Creating new tag: {tag.name_tag}")
+
+        # Проверка на существование тега с таким же названием
+        existing_tag = await db.execute(select(Tag).where(Tag.name_tag == tag.name_tag))
+        if existing_tag.scalar_one_or_none():
+            log_warning(f"Tag with name '{tag.name_tag}' already exists")
+            raise InvalidTagDataException("Тег с таким названием уже существует")
 
         db_tag = Tag(**tag.model_dump())
         db.add(db_tag)
@@ -472,14 +530,20 @@ async def create_tag(
         return TagResponse.model_validate(db_tag)
     except PermissionDeniedException:
         raise
+    except InvalidTagDataException:
+        raise
     except IntegrityError as e:
         await db.rollback()
         log_db_error(e, operation="create_tag", table="tags")
-        raise InvalidBookDataException("Тег с таким названием уже существует")
+        raise InvalidTagDataException("Ошибка целостности данных при создании тега")
+    except SQLAlchemyError as e:
+        await db.rollback()
+        log_db_error(e, operation="create_tag", table="tags")
+        raise DatabaseException("Ошибка при создании тега в базе данных")
     except Exception as e:
         await db.rollback()
         log_db_error(e, operation="create_tag", table="tags")
-        raise DatabaseException("Ошибка при создании тега")
+        raise DatabaseException("Непредвиденная ошибка при создании тега")
 
 
 # Для URL /books/ (без /books/books/)
@@ -509,7 +573,6 @@ async def get_books_by_category(
     category_id: int,
     limit: int = Query(20, ge=1, le=100, description="Максимальное количество результатов"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(current_active_user),
 ):
     """
     Получить список книг по категории.
@@ -519,10 +582,16 @@ async def get_books_by_category(
         limit: Максимальное количество результатов
     """
     try:
-        log_info(f"User {user.email} getting books by category ID: {category_id}")
+        log_info(f"Getting books by category ID: {category_id}")
+
+        # Проверяем существование категории
+        category = await db.execute(select(Category).where(Category.id == category_id))
+        if not category.scalar_one_or_none():
+            log_warning(f"Category with ID {category_id} not found")
+            raise CategoryNotFoundException(f"Категория с ID {category_id} не найдена")
 
         books_service = BookService(db)
-        books = await books_service.get_books(category_id=category_id, limit=limit, user_id=user.id)
+        books = await books_service.get_books(category_id=category_id, limit=limit)
 
         if not books:
             log_info(f"No books found for category ID: {category_id}")
@@ -531,9 +600,14 @@ async def get_books_by_category(
         log_info(f"Found {len(books)} books for category ID: {category_id}")
         return [BookResponse.model_validate(book) for book in books]
 
-    except Exception as e:
-        log_db_error(e, operation="get_books_by_category")
+    except CategoryNotFoundException:
+        raise
+    except SQLAlchemyError as e:
+        log_db_error(e, operation="get_books_by_category", table="books", category_id=str(category_id))
         raise DatabaseException("Ошибка при получении книг по категории")
+    except Exception as e:
+        log_db_error(e, operation="get_books_by_category", table="books", category_id=str(category_id))
+        raise DatabaseException("Непредвиденная ошибка при получении книг по категории")
 
 
 @router.get("/by-author/{author_id}", response_model=list[BookResponse])
@@ -541,7 +615,6 @@ async def get_books_by_author(
     author_id: int,
     limit: int = Query(20, ge=1, le=100, description="Максимальное количество результатов"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(current_active_user),
 ):
     """
     Получить список книг по автору.
@@ -551,10 +624,16 @@ async def get_books_by_author(
         limit: Максимальное количество результатов
     """
     try:
-        log_info(f"User {user.email} getting books by author ID: {author_id}")
+        log_info(f"Getting books by author ID: {author_id}")
+
+        # Проверяем существование автора
+        author = await db.execute(select(Author).where(Author.id == author_id))
+        if not author.scalar_one_or_none():
+            log_warning(f"Author with ID {author_id} not found")
+            raise AuthorNotFoundException(f"Автор с ID {author_id} не найден")
 
         books_service = BookService(db)
-        books = await books_service.get_books(author_id=author_id, limit=limit, user_id=user.id)
+        books = await books_service.get_books(author_id=author_id, limit=limit)
 
         if not books:
             log_info(f"No books found for author ID: {author_id}")
@@ -563,9 +642,14 @@ async def get_books_by_author(
         log_info(f"Found {len(books)} books for author ID: {author_id}")
         return [BookResponse.model_validate(book) for book in books]
 
-    except Exception as e:
-        log_db_error(e, operation="get_books_by_author")
+    except AuthorNotFoundException:
+        raise
+    except SQLAlchemyError as e:
+        log_db_error(e, operation="get_books_by_author", table="books", author_id=str(author_id))
         raise DatabaseException("Ошибка при получении книг по автору")
+    except Exception as e:
+        log_db_error(e, operation="get_books_by_author", table="books", author_id=str(author_id))
+        raise DatabaseException("Непредвиденная ошибка при получении книг по автору")
 
 
 @router.get("/categories", response_model=List[CategoryResponse])
@@ -630,12 +714,19 @@ async def get_user_likes(
         books_service = BookService(db)
         books = await books_service.get_user_likes(user.id, limit=limit, skip=skip)
 
+        if not books:
+            log_info(f"No liked books found for user {user.email}")
+            return []
+
         log_info(f"Found {len(books)} liked books for user {user.email}")
         return [BookResponse.model_validate(book) for book in books]
 
+    except SQLAlchemyError as e:
+        log_db_error(e, operation="get_user_likes", table="likes", user_id=str(user.id))
+        raise DatabaseException("Ошибка при получении списка понравившихся книг из базы данных")
     except Exception as e:
-        log_db_error(e, operation="get_user_likes")
-        raise DatabaseException("Ошибка при получении списка понравившихся книг")
+        log_db_error(e, operation="get_user_likes", table="likes", user_id=str(user.id))
+        raise DatabaseException("Непредвиденная ошибка при получении списка понравившихся книг")
 
 
 @router.get("/user/favorites", response_model=List[BookResponse])
@@ -654,12 +745,19 @@ async def get_user_favorites(
         books_service = BookService(db)
         books = await books_service.get_user_favorites(user.id, limit=limit, skip=skip)
 
+        if not books:
+            log_info(f"No favorite books found for user {user.email}")
+            return []
+
         log_info(f"Found {len(books)} favorite books for user {user.email}")
         return [BookResponse.model_validate(book) for book in books]
 
+    except SQLAlchemyError as e:
+        log_db_error(e, operation="get_user_favorites", table="favorites", user_id=str(user.id))
+        raise DatabaseException("Ошибка при получении списка избранных книг из базы данных")
     except Exception as e:
-        log_db_error(e, operation="get_user_favorites")
-        raise DatabaseException("Ошибка при получении списка избранных книг")
+        log_db_error(e, operation="get_user_favorites", table="favorites", user_id=str(user.id))
+        raise DatabaseException("Непредвиденная ошибка при получении списка избранных книг")
 
 
 @router.get("/user/ratings", response_model=List[UserRatingResponse])
@@ -678,12 +776,19 @@ async def get_user_ratings(
         books_service = BookService(db)
         books_with_ratings = await books_service.get_user_ratings(user.id, limit=limit, skip=skip)
 
+        if not books_with_ratings:
+            log_info(f"No rated books found for user {user.email}")
+            return []
+
         log_info(f"Found {len(books_with_ratings)} rated books for user {user.email}")
         return [
             UserRatingResponse(book=BookResponse.model_validate(book), user_rating=rating)
             for book, rating in books_with_ratings
         ]
 
+    except SQLAlchemyError as e:
+        log_db_error(e, operation="get_user_ratings", table="ratings", user_id=str(user.id))
+        raise DatabaseException("Ошибка при получении списка оцененных книг из базы данных")
     except Exception as e:
-        log_db_error(e, operation="get_user_ratings")
-        raise DatabaseException("Ошибка при получении списка оцененных книг")
+        log_db_error(e, operation="get_user_ratings", table="ratings", user_id=str(user.id))
+        raise DatabaseException("Непредвиденная ошибка при получении списка оцененных книг")
