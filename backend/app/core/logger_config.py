@@ -3,43 +3,106 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from app.core.config import settings
-
 # Создаем директорию для логов, если она не существует
 log_dir = Path("logs")
 log_dir.mkdir(exist_ok=True)
 
-# Настройка форматирования логов
+# Настраиваем формат логов
 log_format = logging.Formatter(
-    "%(asctime)s - %(name)s - %(levelname)s - %(message)s - " "[%(filename)s:%(lineno)d] - %(funcName)s()"
+    "%(asctime)s - %(name)s - %(levelname)s - %(message)s - [%(filename)s:%(lineno)d] - %(funcName)s()"
 )
 
-# Настройка файлового обработчика с ротацией
-file_handler = RotatingFileHandler(
-    filename=log_dir / "api.log",
-    maxBytes=10 * 1024 * 1024,  # 10MB
-    backupCount=5,
-    encoding="utf-8",
-)
+# Настраиваем файловый обработчик
+file_handler = RotatingFileHandler("logs/api.log", maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")  # 10MB
+file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(log_format)
 
-# Настройка консольного обработчика
+# Настраиваем консольный обработчик
 console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.DEBUG)
 console_handler.setFormatter(log_format)
 
 # Создаем логгер
 logger = logging.getLogger("books_portal")
-logger.setLevel(settings.LOG_LEVEL)
-
-# Добавляем обработчики
+logger.setLevel(logging.DEBUG)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
-# Отключаем логирование от других библиотек
+# Устанавливаем уровень логирования для других библиотек
 logging.getLogger("uvicorn").setLevel(logging.WARNING)
 logging.getLogger("fastapi").setLevel(logging.WARNING)
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
 logging.getLogger("alembic").setLevel(logging.WARNING)
+
+
+def log_db_error(error: Exception, context: dict = None):
+    """Логирование ошибок базы данных"""
+    error_msg = f"Database error: {str(error)}"
+    if context:
+        error_msg += f" Context: {context}"
+    logger.error(
+        error_msg, exc_info=True, extra={"error_type": "database", "error_details": str(error), "context": context}
+    )
+
+
+def log_cache_error(error: Exception, context: dict = None):
+    """Логирование ошибок кэша"""
+    error_msg = f"Cache error: {str(error)}"
+    if context:
+        error_msg += f" Context: {context}"
+    logger.error(
+        error_msg, exc_info=True, extra={"error_type": "cache", "error_details": str(error), "context": context}
+    )
+
+
+def log_recommendation_error(error: Exception, context: dict = None):
+    """Логирование ошибок рекомендаций"""
+    error_msg = f"Recommendation error: {str(error)}"
+    if context:
+        error_msg += f" Context: {context}"
+    logger.error(
+        error_msg,
+        exc_info=True,
+        extra={"error_type": "recommendation", "error_details": str(error), "context": context},
+    )
+
+
+def log_critical_error(error: Exception, context: dict = None):
+    """Логирование критических ошибок"""
+    error_msg = f"Critical error: {str(error)}"
+    if context:
+        error_msg += f" Context: {context}"
+    logger.critical(
+        error_msg, exc_info=True, extra={"error_type": "critical", "error_details": str(error), "context": context}
+    )
+
+
+def log_info(message: str, context: dict = None):
+    """Логирование информационных сообщений"""
+    if context:
+        message += f" Context: {context}"
+    logger.info(message, extra={"context": context})
+
+
+def log_debug(message: str, context: dict = None):
+    """Логирование отладочных сообщений"""
+    if context:
+        message += f" Context: {context}"
+    logger.debug(message, extra={"context": context})
+
+
+def log_warning(message: str, context: dict = None):
+    """Логирование предупреждений"""
+    if context:
+        message += f" Context: {context}"
+    logger.warning(message, extra={"context": context})
+
+
+def log_error(message: str, context: dict = None):
+    """Логирование ошибок"""
+    if context:
+        message += f" Context: {context}"
+    logger.error(message, exc_info=True, extra={"context": context})
 
 
 # Функция для логирования запросов
@@ -74,19 +137,6 @@ def log_request(request, response=None, error=None):
         logger.error("Request failed", extra=log_data)
     else:
         logger.info("Request completed", extra=log_data)
-
-
-# Функция для логирования ошибок базы данных
-def log_db_error(error, operation, table=None, user_id=None):
-    """Логирование ошибок базы данных"""
-    log_data = {
-        "operation": operation,
-        "table": table,
-        "user_id": user_id,
-        "error": str(error),
-        "error_type": type(error).__name__,
-    }
-    logger.error("Database error", extra=log_data)
 
 
 # Функция для логирования ошибок внешних API
@@ -146,18 +196,6 @@ def log_validation_error(error, model_name=None, field=None):
     logger.warning("Validation error", extra=log_data)
 
 
-# Функция для логирования ошибок кэширования
-def log_cache_error(error, operation=None, key=None):
-    """Логирование ошибок работы с кэшем"""
-    log_data = {
-        "operation": operation,
-        "key": key,
-        "error": str(error),
-        "error_type": type(error).__name__,
-    }
-    logger.error("Cache error", extra=log_data)
-
-
 # Функция для логирования ошибок загрузки файлов
 def log_file_error(error, file_name=None, operation=None):
     """Логирование ошибок работы с файлами"""
@@ -182,18 +220,6 @@ def log_search_error(error, query=None, filters=None):
     logger.error("Search error", extra=log_data)
 
 
-# Функция для логирования ошибок рекомендаций
-def log_recommendation_error(error, user_id=None, context=None):
-    """Логирование ошибок формирования рекомендаций"""
-    log_data = {
-        "user_id": user_id,
-        "context": context,
-        "error": str(error),
-        "error_type": type(error).__name__,
-    }
-    logger.error("Recommendation error", extra=log_data)
-
-
 # Функция для логирования бизнес-логики
 def log_business_error(error, operation=None, context=None):
     """Логирование ошибок бизнес-логики"""
@@ -204,43 +230,3 @@ def log_business_error(error, operation=None, context=None):
         "error_type": type(error).__name__,
     }
     logger.error("Business logic error", extra=log_data)
-
-
-# Функция для логирования критических ошибок
-def log_critical_error(error, component=None, context=None):
-    """Логирование критических ошибок"""
-    log_data = {
-        "component": component,
-        "context": context,
-        "error": str(error),
-        "error_type": type(error).__name__,
-        "traceback": error.__traceback__,
-    }
-    logger.critical("Critical error", extra=log_data)
-
-
-# Функция для логирования информационных сообщений
-def log_info(message, context=None):
-    """Логирование информационных сообщений"""
-    log_data = {
-        "context": context,
-    }
-    logger.info(message, extra=log_data)
-
-
-# Функция для логирования предупреждений
-def log_warning(message, context=None):
-    """Логирование предупреждений"""
-    log_data = {
-        "context": context,
-    }
-    logger.warning(message, extra=log_data)
-
-
-# Функция для логирования отладочной информации
-def log_debug(message, context=None):
-    """Логирование отладочной информации"""
-    log_data = {
-        "context": context,
-    }
-    logger.debug(message, extra=log_data)

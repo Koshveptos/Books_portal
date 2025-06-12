@@ -31,10 +31,12 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.bot.run_bot import run_bot
 from app.core.config import settings
+from app.core.dependencies import init_redis
 from app.core.exceptions import BookPortalException
 from app.core.logger_config import (
     log_business_error,
     log_critical_error,
+    log_db_error,
     log_validation_error,
     log_warning,
 )
@@ -48,6 +50,10 @@ logger.setLevel(logging.INFO)
 async def lifespan(app: FastAPI):
     """Контекстный менеджер для управления жизненным циклом приложения"""
     logger.info("Application startup...")
+
+    # Инициализация Redis клиента
+    await init_redis()
+
     # Запускаем бота в фоновом режиме
     bot_task = asyncio.create_task(run_bot())
     yield
@@ -57,6 +63,7 @@ async def lifespan(app: FastAPI):
         await bot_task
     except asyncio.CancelledError:
         pass
+
     logger.info("Application shutdown...")
 
 
@@ -276,13 +283,15 @@ async def database_exception_handler(request: Request, exc: SQLAlchemyError):
             },
         )
 
-    log_critical_error(
-        error=exc,
-        component="database",
-        context={
+    log_db_error(
+        exc,
+        {
+            "component": "database",
             "method": request.method,
             "url": str(request.url),
             "client": request.client.host if request.client else "Unknown",
+            "error_type": type(exc).__name__,
+            "error_details": str(exc),
         },
     )
     return JSONResponse(
@@ -299,14 +308,16 @@ async def database_exception_handler(request: Request, exc: SQLAlchemyError):
 # Общий обработчик непредвиденных ошибок (500)
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    """Обработчик необработанных исключений"""
+    """Обработчик всех необработанных исключений"""
     log_critical_error(
-        error=exc,
-        component="application",
-        context={
+        exc,
+        {
+            "component": "general_exception_handler",
+            "path": request.url.path,
             "method": request.method,
-            "url": str(request.url),
             "client": request.client.host if request.client else "Unknown",
+            "error_type": type(exc).__name__,
+            "error_details": str(exc),
         },
     )
     return JSONResponse(

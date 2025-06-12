@@ -1,25 +1,15 @@
 import json
-from typing import List, Optional
+from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, Query, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Query
 from models.user import User
 from redis import Redis
-from schemas.recommendations import BookRecommendation, RecommendationStats, RecommendationType, SimilarUser
-from services.recommendations import (
-    RecommendationService,
-    get_author_recommendations_from_db,
-    get_category_recommendations_from_db,
-    get_recommendation_stats_from_db,
-    get_similar_users_from_db,
-    get_tag_recommendations_from_db,
-)
+from schemas.recommendations import BookRecommendation, RecommendationStats, RecommendationType
+from services.recommendation import RecommendationService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_active_user, get_db, get_redis_client
 from app.core.exceptions import (
-    CacheException,
-    DatabaseException,
     NotEnoughDataForRecommendationException,
     RecommendationException,
 )
@@ -47,7 +37,16 @@ async def get_recommendations_from_db(user_id: int, db: AsyncSession) -> List[Bo
         )
         return recommendations
     except Exception as e:
-        log_db_error(error=e, operation="get_recommendations_from_db", table="recommendations")
+        log_db_error(
+            e,
+            {
+                "operation": "get_recommendations_from_db",
+                "table": "recommendations",
+                "user_id": user_id,
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
         raise RecommendationException("Ошибка при получении рекомендаций из базы данных")
 
 
@@ -57,10 +56,8 @@ async def get_recommendations(
     redis_client: Redis = Depends(get_redis_client),
     current_user: User = Depends(get_current_active_user),
     limit: int = Query(10, ge=1, le=100, description="Максимальное количество рекомендаций"),
-    min_rating: float = Query(3.0, ge=1.0, le=5.0, description="Минимальный рейтинг книг"),
-    min_year: Optional[int] = Query(None, description="Минимальный год издания"),
-    max_year: Optional[int] = Query(None, description="Максимальный год издания"),
-    min_ratings_count: int = Query(5, ge=1, le=100, description="Минимальное количество оценок"),
+    min_rating: float = Query(2.5, ge=1.0, le=5.0, description="Минимальный рейтинг книг"),
+    min_ratings_count: int = Query(3, ge=1, le=100, description="Минимальное количество оценок"),
     recommendation_type: RecommendationType = Query(RecommendationType.HYBRID, description="Тип рекомендаций"),
     use_cache: bool = Query(True, description="Использовать кэширование"),
 ):
@@ -87,7 +84,7 @@ async def get_recommendations(
         )
 
         # Пытаемся получить рекомендации из кэша
-        if use_cache:
+        if use_cache and redis_client is not None:
             try:
                 cached_recommendations = await redis_client.get(f"recommendations:{current_user.id}")
                 if cached_recommendations:
@@ -99,59 +96,90 @@ async def get_recommendations(
                         return recommendations
                     except json.JSONDecodeError as e:
                         log_cache_error(
-                            e, operation="parse_cached_recommendations", key=f"recommendations:{current_user.id}"
+                            e,
+                            {
+                                "operation": "parse_cached_recommendations",
+                                "key": f"recommendations:{current_user.id}",
+                                "error_type": type(e).__name__,
+                                "error_details": str(e),
+                            },
                         )
                         # Если не удалось распарсить кэш, продолжаем с получением из БД
             except Exception as e:
-                log_cache_error(e, operation="get_recommendations", key=f"recommendations:{current_user.id}")
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "get_recommendations",
+                        "key": f"recommendations:{current_user.id}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
                 # Если кэш недоступен, продолжаем с получением из БД
 
         # Получаем рекомендации из базы данных
         try:
-            recommendation_service = RecommendationService(db, redis_client)
+            recommendation_service = RecommendationService(db)
             recommendations = await recommendation_service.get_user_recommendations(
                 user_id=current_user.id,
                 limit=limit,
                 min_rating=min_rating,
-                min_year=min_year,
-                max_year=max_year,
                 min_ratings_count=min_ratings_count,
                 recommendation_type=recommendation_type,
             )
 
             if not recommendations:
                 log_info(f"No recommendations found for user {current_user.id}")
-                return []  # Возвращаем пустой список вместо 204 No Content
+                return []
 
             log_info(f"Found {len(recommendations)} recommendations for user {current_user.id}")
 
             # Сохраняем в кэш
-            if use_cache:
+            if use_cache and redis_client is not None:
                 try:
                     await redis_client.set(
                         f"recommendations:{current_user.id}", json.dumps(recommendations), expire=3600  # 1 час
                     )
                     log_info(f"Successfully cached {len(recommendations)} recommendations for user {current_user.id}")
                 except Exception as e:
-                    log_cache_error(e, operation="cache_recommendations", key=f"recommendations:{current_user.id}")
+                    log_cache_error(
+                        e,
+                        {
+                            "operation": "cache_recommendations",
+                            "key": f"recommendations:{current_user.id}",
+                            "error_type": type(e).__name__,
+                            "error_details": str(e),
+                        },
+                    )
                     # Если не удалось сохранить в кэш, продолжаем без кэширования
 
             return recommendations
 
         except NotEnoughDataForRecommendationException as e:
             log_warning(f"Not enough data for recommendations: {str(e)}")
-            return []  # Возвращаем пустой список вместо 204 No Content
+            return []
         except Exception as e:
-            log_db_error(error=e, operation="get_recommendations", table="recommendations")
+            log_db_error(
+                e,
+                {
+                    "operation": "get_recommendations",
+                    "user_id": current_user.id,
+                    "recommendation_type": recommendation_type,
+                    "limit": limit,
+                    "min_rating": min_rating,
+                    "min_ratings_count": min_ratings_count,
+                    "use_cache": use_cache,
+                    "error_type": type(e).__name__,
+                    "error_details": str(e),
+                },
+            )
             # Пытаемся получить популярные книги как запасной вариант
             try:
                 log_info(f"Attempting to get popular books as fallback for user {current_user.id}")
-                recommendation_service = RecommendationService(db, None)  # Отключаем кэш для запасного варианта
+                recommendation_service = RecommendationService(db)  # Отключаем кэш для запасного варианта
                 recommendations = await recommendation_service._get_popularity_recommendations(
                     limit=limit,
                     min_rating=min_rating,
-                    min_year=min_year,
-                    max_year=max_year,
                     min_ratings_count=min_ratings_count,
                     exclude_book_ids=set(),
                 )
@@ -159,316 +187,103 @@ async def get_recommendations(
                     log_info(f"Successfully retrieved {len(recommendations)} popular books as fallback")
                     return recommendations
             except Exception as fallback_error:
-                log_db_error(error=fallback_error, operation="get_popular_recommendations", table="recommendations")
+                log_db_error(
+                    fallback_error,
+                    {
+                        "operation": "get_popular_recommendations",
+                        "table": "recommendations",
+                        "user_id": current_user.id,
+                        "error_type": type(fallback_error).__name__,
+                        "error_details": str(fallback_error),
+                    },
+                )
 
             # Если даже запасной вариант не сработал, возвращаем пустой список
             return []
 
     except Exception as e:
-        log_db_error(error=e, operation="get_recommendations", table="recommendations")
-        return []  # Возвращаем пустой список вместо 500 Internal Server Error
+        log_db_error(
+            e,
+            {
+                "operation": "get_recommendations",
+                "table": "recommendations",
+                "user_id": current_user.id,
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
+        return []
 
 
 @router.get("/stats", response_model=RecommendationStats)
 async def get_recommendation_stats(
-    db: AsyncSession = Depends(get_db),
-    redis_client: Redis = Depends(get_redis_client),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    Получить статистику для персональных рекомендаций.
-
-    Возвращает информацию о предпочтениях пользователя, количестве оцененных книг,
-    любимых авторах, категориях и тегах, а также готовности системы
-    предоставлять различные типы рекомендаций для этого пользователя.
-    """
+    current_user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db)
+) -> RecommendationStats:
+    """Получение статистики рекомендаций для пользователя"""
     try:
-        log_info(f"Getting recommendation stats for user {current_user.id}")
-
-        # Пытаемся получить статистику из кэша
-        try:
-            cached_stats = await redis_client.get(f"recommendation_stats:{current_user.id}")
-            if cached_stats:
-                try:
-                    return json.loads(cached_stats)
-                except json.JSONDecodeError as e:
-                    log_cache_error(e, operation="parse_cached_stats", key=f"recommendation_stats:{current_user.id}")
-                    # Если не удалось распарсить кэш, продолжаем с получением из БД
-        except Exception as e:
-            log_cache_error(e, operation="get_recommendation_stats", key=f"recommendation_stats:{current_user.id}")
-            # Если кэш недоступен, продолжаем с получением из БД
-
-        # Если в кэше нет или произошла ошибка, получаем статистику из базы данных
-        recommendation_service = RecommendationService(db, redis_client)
-        stats = await recommendation_service.get_recommendation_stats(user_id=current_user.id)
-
-        log_info(f"Successfully retrieved recommendation stats for user {current_user.id}")
-
-        # Сохраняем в кэш
-        try:
-            await redis_client.set(f"recommendation_stats:{current_user.id}", json.dumps(stats), expire=3600)  # 1 час
-        except Exception as e:
-            log_cache_error(e, operation="cache_recommendation_stats", key=f"recommendation_stats:{current_user.id}")
-            # Если не удалось сохранить в кэш, продолжаем без кэширования
-
-        return stats
-    except CacheException as e:
-        log_cache_error(e, operation="get_recommendation_stats", key=f"recommendation_stats:{current_user.id}")
-        # Если кэш недоступен, получаем статистику из базы данных
-        return await get_recommendation_stats_from_db(current_user.id, db)
+        recommendation_service = RecommendationService(db)
+        return await recommendation_service.get_recommendation_stats(current_user.id)
     except Exception as e:
-        log_db_error(e, operation="get_recommendation_stats", user_id=current_user.id)
-        raise DatabaseException("Ошибка при получении статистики рекомендаций")
+        log_db_error(e, {"user_id": current_user.id, "context": "get_recommendation_stats"})
+        raise RecommendationException("Ошибка при получении статистики рекомендаций")
 
 
-@router.get("/similar-users", response_model=List[SimilarUser])
+@router.get("/similar-users", response_model=List[Dict[str, Any]])
 async def get_similar_users(
-    db: AsyncSession = Depends(get_db),
-    redis_client: Redis = Depends(get_redis_client),
-    current_user: User = Depends(get_current_active_user),
-    limit: int = Query(10, ge=1, le=50, description="Максимальное количество похожих пользователей"),
-    min_common_ratings: int = Query(
-        3, ge=1, le=20, description="Минимальное количество общих оценок для определения сходства"
-    ),
-):
-    """
-    Получить список пользователей с похожими предпочтениями.
-
-    Этот эндпоинт находит пользователей с похожими вкусами на основе
-    оценок книг. Используется для коллаборативной фильтрации и
-    помогает пользователям найти единомышленников.
-    """
+    current_user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """Получение списка похожих пользователей"""
     try:
-        log_info(
-            f"Getting similar users for user {current_user.id} with "
-            f"limit={limit}, min_common_ratings={min_common_ratings}"
-        )
-
-        # Пытаемся получить похожих пользователей из кэша
-        cached_users = await redis_client.get(f"similar_users:{current_user.id}")
-        if cached_users:
-            return json.loads(cached_users)
-
-        # Если в кэше нет, получаем похожих пользователей из базы данных
-        recommendation_service = RecommendationService(db, redis_client)
-        similar_users = await recommendation_service.get_similar_users(
-            user_id=current_user.id, limit=limit, min_common_ratings=min_common_ratings
-        )
-
-        if not similar_users:
-            log_info(f"No similar users found for user {current_user.id}")
-            return JSONResponse(
-                status_code=status.HTTP_204_NO_CONTENT,
-                content={"message": "Похожие пользователи не найдены. Возможно, у вас пока недостаточно оценок."},
-            )
-
-        log_info(f"Found {len(similar_users)} similar users for user {current_user.id}")
-
-        # Сохраняем в кэш
-        await redis_client.set(f"similar_users:{current_user.id}", json.dumps(similar_users), expire=3600)  # 1 час
-
-        return similar_users
-    except CacheException as e:
-        log_cache_error(e, operation="get_similar_users", key=f"similar_users:{current_user.id}")
-        # Если кэш недоступен, получаем похожих пользователей из базы данных
-        return await get_similar_users_from_db(current_user.id, db)
+        recommendation_service = RecommendationService(db)
+        return await recommendation_service._get_similar_users(current_user.id)
     except Exception as e:
-        log_db_error(e, operation="get_similar_users", user_id=current_user.id)
-        raise DatabaseException("Ошибка при получении похожих пользователей")
+        log_db_error(e, {"user_id": current_user.id, "context": "get_similar_users"})
+        raise RecommendationException("Ошибка при получении списка похожих пользователей")
 
 
-@router.get("/by-author", response_model=List[BookRecommendation])
+@router.get("/author", response_model=List[BookRecommendation])
 async def get_author_recommendations(
-    db: AsyncSession = Depends(get_db),
-    redis_client: Redis = Depends(get_redis_client),
-    current_user: User = Depends(get_current_active_user),
-    limit: int = Query(10, ge=1, le=100, description="Максимальное количество рекомендаций"),
-    min_rating: float = Query(3.0, ge=1.0, le=5.0, description="Минимальный рейтинг книг"),
-    min_year: Optional[int] = Query(None, description="Минимальный год издания"),
-    max_year: Optional[int] = Query(None, description="Максимальный год издания"),
-    min_ratings_count: int = Query(5, ge=1, le=100, description="Минимальное количество оценок"),
-):
-    """
-    Получить рекомендации книг от любимых авторов.
-
-    Этот эндпоинт анализирует оценки пользователя, определяет
-    любимых авторов и рекомендует непрочитанные книги этих авторов.
-    """
+    current_user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db)
+) -> List[BookRecommendation]:
+    """Получение рекомендаций по авторам"""
     try:
-        log_info(
-            f"Getting author recommendations for user {current_user.id} with "
-            f"limit={limit}, min_rating={min_rating}, min_ratings_count={min_ratings_count}"
+        recommendation_service = RecommendationService(db)
+        recommendations = await recommendation_service._get_author_based_recommendations(
+            user_id=current_user.id, limit=10, min_rating=2.5, min_ratings_count=3, exclude_book_ids=set()
         )
-
-        # Пытаемся получить рекомендации по автору из кэша
-        cached_recommendations = await redis_client.get(f"author_recommendations:{current_user.id}")
-        if cached_recommendations:
-            return json.loads(cached_recommendations)
-
-        # Если в кэше нет, получаем рекомендации из базы данных
-        recommendation_service = RecommendationService(db, redis_client)
-        user_preferences = await recommendation_service._get_user_preferences(current_user.id)
-        recommendations = await recommendation_service._get_author_recommendations(
-            user_preferences=user_preferences,
-            limit=limit,
-            min_rating=min_rating,
-            min_year=min_year,
-            max_year=max_year,
-            min_ratings_count=min_ratings_count,
-            user_id=current_user.id,
-        )
-
-        if not recommendations:
-            log_info(f"No author recommendations found for user {current_user.id}")
-            return JSONResponse(
-                status_code=status.HTTP_204_NO_CONTENT,
-                content={
-                    "message": "Рекомендации по авторам не найдены. Возможно, у вас нет любимых авторов или вы уже прочитали все их книги."
-                },
-            )
-
-        log_info(f"Found {len(recommendations)} author recommendations for user {current_user.id}")
-
-        # Сохраняем в кэш
-        await redis_client.set(
-            f"author_recommendations:{current_user.id}", json.dumps(recommendations), expire=3600  # 1 час
-        )
-
         return recommendations
-    except CacheException as e:
-        log_cache_error(e, operation="get_author_recommendations", key=f"author_recommendations:{current_user.id}")
-        # Если кэш недоступен, получаем рекомендации из базы данных
-        return await get_author_recommendations_from_db(current_user.id, db)
     except Exception as e:
-        log_db_error(e, operation="get_author_recommendations", user_id=current_user.id)
-        raise DatabaseException("Ошибка при получении рекомендаций по автору")
+        log_db_error(e, {"user_id": current_user.id, "context": "get_author_recommendations"})
+        raise RecommendationException("Ошибка при получении рекомендаций по авторам")
 
 
-@router.get("/by-category", response_model=List[BookRecommendation])
+@router.get("/category", response_model=List[BookRecommendation])
 async def get_category_recommendations(
-    db: AsyncSession = Depends(get_db),
-    redis_client: Redis = Depends(get_redis_client),
-    current_user: User = Depends(get_current_active_user),
-    limit: int = Query(10, ge=1, le=100, description="Максимальное количество рекомендаций"),
-    min_rating: float = Query(3.0, ge=1.0, le=5.0, description="Минимальный рейтинг книг"),
-    min_year: Optional[int] = Query(None, description="Минимальный год издания"),
-    max_year: Optional[int] = Query(None, description="Максимальный год издания"),
-    min_ratings_count: int = Query(5, ge=1, le=100, description="Минимальное количество оценок"),
-):
-    """
-    Получить рекомендации книг из любимых категорий.
-
-    Этот эндпоинт анализирует оценки пользователя, определяет
-    любимые категории и рекомендует непрочитанные книги из этих категорий.
-    """
+    current_user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db)
+) -> List[BookRecommendation]:
+    """Получение рекомендаций по категориям"""
     try:
-        log_info(
-            f"Getting category recommendations for user {current_user.id} with "
-            f"limit={limit}, min_rating={min_rating}, min_ratings_count={min_ratings_count}"
+        recommendation_service = RecommendationService(db)
+        recommendations = await recommendation_service._get_category_based_recommendations(
+            user_id=current_user.id, limit=10, min_rating=2.5, min_ratings_count=3, exclude_book_ids=set()
         )
-
-        # Пытаемся получить рекомендации по категории из кэша
-        cached_recommendations = await redis_client.get(f"category_recommendations:{current_user.id}")
-        if cached_recommendations:
-            return json.loads(cached_recommendations)
-
-        # Если в кэше нет, получаем рекомендации из базы данных
-        recommendation_service = RecommendationService(db, redis_client)
-        user_preferences = await recommendation_service._get_user_preferences(current_user.id)
-        recommendations = await recommendation_service._get_category_recommendations(
-            user_preferences=user_preferences,
-            limit=limit,
-            min_rating=min_rating,
-            min_year=min_year,
-            max_year=max_year,
-            min_ratings_count=min_ratings_count,
-            user_id=current_user.id,
-        )
-
-        if not recommendations:
-            log_info(f"No category recommendations found for user {current_user.id}")
-            return JSONResponse(
-                status_code=status.HTTP_204_NO_CONTENT,
-                content={"message": "Рекомендации по категориям не найдены. Возможно, у вас нет любимых категорий."},
-            )
-
-        log_info(f"Found {len(recommendations)} category recommendations for user {current_user.id}")
-
-        # Сохраняем в кэш
-        await redis_client.set(
-            f"category_recommendations:{current_user.id}", json.dumps(recommendations), expire=3600  # 1 час
-        )
-
         return recommendations
-    except CacheException as e:
-        log_cache_error(e, operation="get_category_recommendations", key=f"category_recommendations:{current_user.id}")
-        # Если кэш недоступен, получаем рекомендации из базы данных
-        return await get_category_recommendations_from_db(current_user.id, db)
     except Exception as e:
-        log_db_error(e, operation="get_category_recommendations", user_id=current_user.id)
-        raise DatabaseException("Ошибка при получении рекомендаций по категории")
+        log_db_error(e, {"user_id": current_user.id, "context": "get_category_recommendations"})
+        raise RecommendationException("Ошибка при получении рекомендаций по категориям")
 
 
-@router.get("/by-tag", response_model=List[BookRecommendation])
+@router.get("/tag", response_model=List[BookRecommendation])
 async def get_tag_recommendations(
-    db: AsyncSession = Depends(get_db),
-    redis_client: Redis = Depends(get_redis_client),
-    current_user: User = Depends(get_current_active_user),
-    limit: int = Query(10, ge=1, le=100, description="Максимальное количество рекомендаций"),
-    min_rating: float = Query(3.0, ge=1.0, le=5.0, description="Минимальный рейтинг книг"),
-    min_year: Optional[int] = Query(None, description="Минимальный год издания"),
-    max_year: Optional[int] = Query(None, description="Максимальный год издания"),
-    min_ratings_count: int = Query(5, ge=1, le=100, description="Минимальное количество оценок"),
-):
-    """
-    Получить рекомендации книг с любимыми тегами.
-
-    Этот эндпоинт анализирует оценки пользователя, определяет
-    любимые теги и рекомендует непрочитанные книги с этими тегами.
-    """
+    current_user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db)
+) -> List[BookRecommendation]:
+    """Получение рекомендаций по тегам"""
     try:
-        log_info(
-            f"Getting tag recommendations for user {current_user.id} with "
-            f"limit={limit}, min_rating={min_rating}, min_ratings_count={min_ratings_count}"
+        recommendation_service = RecommendationService(db)
+        recommendations = await recommendation_service._get_tag_based_recommendations(
+            user_id=current_user.id, limit=10, min_rating=2.5, min_ratings_count=3, exclude_book_ids=set()
         )
-
-        # Пытаемся получить рекомендации по тегу из кэша
-        cached_recommendations = await redis_client.get(f"tag_recommendations:{current_user.id}")
-        if cached_recommendations:
-            return json.loads(cached_recommendations)
-
-        # Если в кэше нет, получаем рекомендации из базы данных
-        recommendation_service = RecommendationService(db, redis_client)
-        user_preferences = await recommendation_service._get_user_preferences(current_user.id)
-        recommendations = await recommendation_service._get_tag_recommendations(
-            user_preferences=user_preferences,
-            limit=limit,
-            min_rating=min_rating,
-            min_year=min_year,
-            max_year=max_year,
-            min_ratings_count=min_ratings_count,
-            user_id=current_user.id,
-        )
-
-        if not recommendations:
-            log_info(f"No tag recommendations found for user {current_user.id}")
-            return JSONResponse(
-                status_code=status.HTTP_204_NO_CONTENT,
-                content={"message": "Рекомендации по тегам не найдены. Возможно, у вас нет любимых тегов."},
-            )
-
-        log_info(f"Found {len(recommendations)} tag recommendations for user {current_user.id}")
-
-        # Сохраняем в кэш
-        await redis_client.set(
-            f"tag_recommendations:{current_user.id}", json.dumps(recommendations), expire=3600  # 1 час
-        )
-
         return recommendations
-    except CacheException as e:
-        log_cache_error(e, operation="get_tag_recommendations", key=f"tag_recommendations:{current_user.id}")
-        # Если кэш недоступен, получаем рекомендации из базы данных
-        return await get_tag_recommendations_from_db(current_user.id, db)
     except Exception as e:
-        log_db_error(e, operation="get_tag_recommendations", user_id=current_user.id)
-        raise DatabaseException("Ошибка при получении рекомендаций по тегу")
+        log_db_error(e, {"user_id": current_user.id, "context": "get_tag_recommendations"})
+        raise RecommendationException("Ошибка при получении рекомендаций по тегам")
