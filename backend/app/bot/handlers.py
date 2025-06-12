@@ -1,20 +1,24 @@
-import logging
+"""
+Обработчики команд и сообщений телеграм бота.
+"""
 
 from aiogram import Dispatcher, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from app.core.logger_config import logger
+
 from .api import BooksPortalAPI
 from .keyboards import (
-    get_book_actions_keyboard,
-    get_main_keyboard,
-    get_pagination_keyboard,
+    get_authors_keyboard,
+    get_books_keyboard,
+    get_categories_keyboard,
+    get_main_menu_keyboard,
     get_rating_keyboard,
 )
-from .states import SearchBooks
+from .states import BookSearch
 
-logger = logging.getLogger(__name__)
 router = Router()
 
 
@@ -27,35 +31,35 @@ def register_handlers(dp: Dispatcher):
     dp.message.register(search_books_command, Command(commands=["search"]))
 
     # Обработчики состояний
-    dp.message.register(process_search_query, SearchBooks.waiting_for_query)
+    dp.message.register(process_search_query, BookSearch.waiting_for_query)
 
     # Обработчики основных действий
-    dp.message.register(show_catalog, lambda msg: msg.text == "📚 Каталог")
-    dp.message.register(search_books_command, lambda msg: msg.text == "🔍 Поиск книг")
-    dp.message.register(show_link_account, lambda msg: msg.text == "👤 Привязать аккаунт")
+    dp.message.register(search_books_command, F.text == "📚 Поиск книг")
+    dp.message.register(get_recommendations, F.text == "📖 Рекомендации")
+    dp.message.register(show_categories, F.text == "📋 Категории")
+    dp.message.register(show_authors, F.text == "👥 Авторы")
 
     # Обработчики callback-запросов
-    dp.callback_query.register(process_link_account, F.data == "link_account")
-    dp.callback_query.register(
-        process_book_action,
-        F.data.startswith(("book_authors_", "similar_books_", "book_details_", "rate_book_", "add_favorite_")),
-    )
-    dp.callback_query.register(process_pagination, F.data.endswith(("_page_")))
+    dp.callback_query.register(process_book_callback, F.data.startswith("book_"))
+    dp.callback_query.register(process_category_callback, F.data.startswith("category_"))
+    dp.callback_query.register(process_author_callback, F.data.startswith("author_"))
+    dp.callback_query.register(process_rating_callback, F.data.startswith("rate_"))
+    dp.callback_query.register(process_pagination, F.data.startswith("books_page_"))
+
+    dp.include_router(router)
 
 
 async def start_command(message: Message):
     """Обработчик команды /start"""
-    await message.answer(
-        "Добро пожаловать в Books Portal Bot! 📚\n\n"
-        "Я помогу вам найти интересные книги и получить персонализированные рекомендации.\n\n"
-        "Вы можете:\n"
-        "• 🔍 Искать книги\n"
-        "• 📚 Просматривать каталог\n"
-        "• 📖 Читать описания книг\n\n"
-        "Для доступа к дополнительным функциям (рекомендации, избранное, оценки) "
-        "привяжите свой аккаунт с сайта Books Portal.",
-        reply_markup=get_main_keyboard(),
-    )
+    try:
+        await message.answer(
+            "Добро пожаловать в Books Portal! 📚\n" "Я помогу вам найти интересные книги и получить рекомендации.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+        logger.info(f"User {message.from_user.id} started the bot")
+    except Exception as e:
+        logger.error(f"Error in start command: {str(e)}")
+        await message.answer("Произошла ошибка. Пожалуйста, попробуйте позже.")
 
 
 async def help_command(message: Message):
@@ -66,268 +70,251 @@ async def help_command(message: Message):
         "/help - Показать это сообщение\n"
         "/search - Поиск книг\n\n"
         "Основные функции:\n"
-        "• 🔍 Поиск книг - поиск по каталогу\n"
-        "• 📚 Каталог - просмотр всех книг\n"
-        "• 📖 Описания - информация о книгах\n\n"
-        "Для доступа к дополнительным функциям:\n"
-        "• 📚 Мои книги - ваша библиотека\n"
+        "• 📚 Поиск книг - поиск по каталогу\n"
         "• 📖 Рекомендации - персонализированные рекомендации\n"
-        "• ⭐ Оценки - ваши оценки книг\n"
-        "• ❤️ Избранное - ваши избранные книги\n\n"
-        "Привяжите аккаунт с сайта для доступа к дополнительным функциям!"
+        "• 📋 Категории - просмотр категорий\n"
+        "• 👥 Авторы - просмотр авторов\n\n"
+        "Для оценки книг используйте кнопки со звездочками ⭐"
     )
-    await message.answer(help_text)
-
-
-async def process_link_account(callback: CallbackQuery):
-    """Обработчик кнопки привязки аккаунта"""
-    await callback.message.answer(
-        "Для привязки аккаунта:\n\n"
-        "1. Перейдите на сайт Books Portal:\n"
-        "http://localhost:3000\n\n"
-        "2. Войдите в свой аккаунт или зарегистрируйтесь\n"
-        "3. В личном кабинете найдите раздел 'Привязать Telegram'\n"
-        "4. Введите ваш Telegram ID: " + str(callback.from_user.id) + "\n\n"
-        "После привязки аккаунта вы получите доступ ко всем функциям бота!"
-    )
-    await callback.answer()
+    await message.answer(help_text, reply_markup=get_main_menu_keyboard())
 
 
 async def search_books_command(message: Message, state: FSMContext):
-    """Обработчик команды /search"""
-    await message.answer("Введите название книги или автора для поиска:")
-    await state.set_state(SearchBooks.waiting_for_query)
+    """Обработчик команды поиска книг"""
+    try:
+        await message.answer("Введите название книги или автора для поиска:")
+        await state.set_state(BookSearch.waiting_for_query)
+    except Exception as e:
+        logger.error(f"Error in search command: {str(e)}")
+        await message.answer("Произошла ошибка. Пожалуйста, попробуйте позже.")
 
 
 async def process_search_query(message: Message, state: FSMContext):
     """Обработчик поискового запроса"""
-    query = message.text.strip()
-    if not query:
-        await message.answer("Пожалуйста, введите поисковый запрос.")
-        return
-
     try:
+        query = message.text.strip()
+        if not query:
+            await message.answer("Пожалуйста, введите поисковый запрос.")
+            return
+
         async with BooksPortalAPI() as api:
-            # Получаем результаты поиска с меньшим количеством книг
-            results = await api.search_books(query=query, page=1, limit=3)
+            results = await api.search_books(query=query, page=1, limit=5)
 
             if not results or not results.get("items"):
                 await message.answer("По вашему запросу ничего не найдено.")
                 return
 
-            # Сохраняем поисковый запрос в состоянии
-            await state.update_data(search_query=query)
-
-            # Формируем сообщение с результатами
             response = "📚 Результаты поиска:\n\n"
-            for i, book in enumerate(results["items"], 1):
-                # Получаем список авторов
-                authors = await api.get_book_authors(book["id"])
-                authors_str = ", ".join([author["name"] for author in authors]) if authors else "Не указан"
-
+            for book in results["items"]:
                 response += (
-                    f"{i}. 📖 {book['title']}\n"
-                    f"   👤 Авторы: {authors_str}\n"
-                    f"   📚 Категории: {', '.join([cat['name_categories'] for cat in book.get('categories', [])]) if book.get('categories') else 'Не указаны'}\n"
-                    f"   ⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n"
-                    f"   📝 Описание: {book.get('description', 'Нет описания')[:100]}...\n\n"
+                    f"📖 {book['title']}\n"
+                    f"👤 Авторы: {', '.join([author['name'] for author in book.get('authors', [])])}\n"
+                    f"⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n\n"
                 )
 
-            # Добавляем пагинацию только если есть больше одной страницы
-            if results["total"] > results["size"]:
-                total_pages = (results["total"] + results["size"] - 1) // results["size"]
-                keyboard = get_pagination_keyboard(1, total_pages, "search")
-                await message.answer(response, reply_markup=keyboard)
-            else:
-                await message.answer(response)
-
-            # Добавляем кнопки действий для каждой книги
-            for book in results["items"]:
-                keyboard = get_book_actions_keyboard(book["id"])
-                await message.answer(f"Действия с книгой '{book['title']}':", reply_markup=keyboard)
+            keyboard = get_books_keyboard(results["items"])
+            await message.answer(response, reply_markup=keyboard)
 
     except Exception as e:
         logger.error(f"Error during search: {str(e)}")
         await message.answer("Произошла ошибка при поиске. Пожалуйста, попробуйте позже.")
+    finally:
+        await state.clear()
 
-    await state.clear()
 
-
-async def show_catalog(message: Message):
-    """Показать каталог книг"""
+async def get_recommendations(message: Message):
+    """Обработчик получения рекомендаций"""
     try:
         async with BooksPortalAPI() as api:
-            # Получаем первую страницу каталога с меньшим количеством книг
-            books = await api.get_catalog(page=1, limit=3)
+            recommendations = await api.get_recommendations(limit=5)
 
-            if not books or not isinstance(books, dict) or not books.get("items"):
-                await message.answer("Каталог пуст.")
+            if not recommendations:
+                await message.answer("К сожалению, не удалось получить рекомендации.")
                 return
 
-            # Формируем сообщение
-            response = "📚 Каталог книг:\n\n"
-            for i, book in enumerate(books["items"], 1):
-                # Получаем список авторов
-                authors = await api.get_book_authors(book["id"])
-                authors_str = ", ".join([author["name"] for author in authors]) if authors else "Не указан"
-
+            response = "📖 Рекомендуемые книги:\n\n"
+            for book in recommendations:
                 response += (
-                    f"{i}. 📖 {book['title']}\n"
-                    f"   👤 Авторы: {authors_str}\n"
-                    f"   ⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n"
-                    f"   📝 Описание: {book.get('description', 'Нет описания')[:100]}...\n\n"
+                    f"📖 {book['title']}\n"
+                    f"👤 Авторы: {', '.join([author['name'] for author in book.get('authors', [])])}\n"
+                    f"⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n\n"
                 )
 
-            # Добавляем пагинацию
-            total_pages = (books["total"] + 2) // 3  # Округляем вверх
-            keyboard = get_pagination_keyboard(1, total_pages, "catalog")
-
+            keyboard = get_books_keyboard(recommendations)
             await message.answer(response, reply_markup=keyboard)
 
-            # Добавляем кнопки действий для каждой книги
-            for book in books["items"]:
-                keyboard = get_book_actions_keyboard(book["id"])
-                await message.answer(f"Действия с книгой '{book['title']}':", reply_markup=keyboard)
-
     except Exception as e:
-        logger.error(f"Error getting catalog: {str(e)}")
-        await message.answer("Произошла ошибка при загрузке каталога. Пожалуйста, попробуйте позже.")
+        logger.error(f"Error getting recommendations: {str(e)}")
+        await message.answer("Произошла ошибка при получении рекомендаций. Пожалуйста, попробуйте позже.")
 
 
-async def show_link_account(message: Message):
-    """Показать информацию о привязке аккаунта"""
+async def show_categories(message: Message):
+    """Обработчик показа категорий"""
     try:
         async with BooksPortalAPI() as api:
-            # Проверяем, привязан ли уже аккаунт
-            user_info = await api.get_user_info(message.from_user.id)
-            if user_info and user_info.get("telegram_id") == message.from_user.id:
-                await message.answer(
-                    "✅ Ваш аккаунт уже привязан!\n\n"
-                    "Теперь вам доступны все функции бота:\n"
-                    "• 📚 Мои книги\n"
-                    "• 📖 Рекомендации\n"
-                    "• ⭐ Оценки\n"
-                    "• ❤️ Избранное"
-                )
+            categories = await api.get_categories()
+
+            if not categories:
+                await message.answer("Категории не найдены.")
                 return
-    except Exception:
-        pass  # Игнорируем ошибку, если пользователь не привязан
 
-    await message.answer(
-        "Для привязки аккаунта:\n\n"
-        "1. Перейдите на сайт Books Portal:\n"
-        "http://localhost:8000\n\n"
-        "2. Войдите в свой аккаунт или зарегистрируйтесь\n"
-        "3. В личном кабинете найдите раздел 'Привязать Telegram'\n"
-        "4. Введите ваш Telegram ID: " + str(message.from_user.id) + "\n\n"
-        "После привязки аккаунта вы получите доступ ко всем функциям бота!"
-    )
+            response = "📋 Доступные категории:\n\n"
+            for category in categories:
+                response += f"• {category['name']}\n"
+
+            keyboard = get_categories_keyboard(categories)
+            await message.answer(response, reply_markup=keyboard)
+
+    except Exception as e:
+        logger.error(f"Error showing categories: {str(e)}")
+        await message.answer("Произошла ошибка при получении категорий. Пожалуйста, попробуйте позже.")
 
 
-async def process_book_action(callback: CallbackQuery):
-    """Обработчик действий с книгой"""
+async def show_authors(message: Message):
+    """Обработчик показа авторов"""
     try:
-        action, book_id = callback.data.split("_", 1)
-        book_id = int(book_id)
-
         async with BooksPortalAPI() as api:
-            if action == "book_details":
-                # Получаем детальную информацию о книге
-                book = await api.get_book_details(book_id)
-                authors = await api.get_book_authors(book_id)
-                authors_str = ", ".join([author["name"] for author in authors]) if authors else "Не указан"
+            authors = await api.get_authors()
 
-                response = (
-                    f"📖 {book['title']}\n\n"
-                    f"👤 Авторы: {authors_str}\n"
-                    f"📚 Категории: {', '.join([cat['name_categories'] for cat in book.get('categories', [])]) if book.get('categories') else 'Не указаны'}\n"
-                    f"⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n"
-                    f"📝 Описание: {book.get('description', 'Нет описания')}\n"
+            if not authors:
+                await message.answer("Авторы не найдены.")
+                return
+
+            response = "👥 Доступные авторы:\n\n"
+            for author in authors:
+                response += f"• {author['name']}\n"
+
+            keyboard = get_authors_keyboard(authors)
+            await message.answer(response, reply_markup=keyboard)
+
+    except Exception as e:
+        logger.error(f"Error showing authors: {str(e)}")
+        await message.answer("Произошла ошибка при получении авторов. Пожалуйста, попробуйте позже.")
+
+
+async def process_book_callback(callback: CallbackQuery):
+    """Обработчик callback для книг"""
+    try:
+        book_id = int(callback.data.split("_")[1])
+        async with BooksPortalAPI() as api:
+            book = await api.get_book(book_id)
+
+            if not book:
+                await callback.answer("Книга не найдена.")
+                return
+
+            response = (
+                f"📖 {book['title']}\n\n"
+                f"👤 Авторы: {', '.join([author['name'] for author in book.get('authors', [])])}\n"
+                f"📋 Категории: {', '.join([cat['name'] for cat in book.get('categories', [])])}\n"
+                f"⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n"
+                f"📝 Описание: {book.get('description', 'Нет описания')}\n"
+            )
+
+            keyboard = get_rating_keyboard(book_id)
+            await callback.message.answer(response, reply_markup=keyboard)
+            await callback.answer()
+
+    except Exception as e:
+        logger.error(f"Error processing book callback: {str(e)}")
+        await callback.answer("Произошла ошибка. Пожалуйста, попробуйте позже.")
+
+
+async def process_category_callback(callback: CallbackQuery):
+    """Обработчик callback для категорий"""
+    try:
+        category_id = int(callback.data.split("_")[1])
+        async with BooksPortalAPI() as api:
+            books = await api.get_books_by_category(category_id, page=1, limit=5)
+
+            if not books or not books.get("items"):
+                await callback.answer("Книги в этой категории не найдены.")
+                return
+
+            response = "📚 Книги в категории:\n\n"
+            for book in books["items"]:
+                response += (
+                    f"📖 {book['title']}\n"
+                    f"👤 Авторы: {', '.join([author['name'] for author in book.get('authors', [])])}\n"
+                    f"⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n\n"
                 )
-                await callback.message.answer(response)
 
-            elif action == "book_authors":
-                # Получаем список авторов
-                authors = await api.get_book_authors(book_id)
-                if authors:
-                    response = "👤 Авторы книги:\n\n"
-                    for author in authors:
-                        response += f"• {author['name']}\n"
-                else:
-                    response = "Авторы не указаны"
-                await callback.message.answer(response)
-
-            elif action == "similar_books":
-                # Получаем похожие книги
-                similar_books = await api.get_similar_books(book_id)
-                if similar_books:
-                    response = "📚 Похожие книги:\n\n"
-                    for i, book in enumerate(similar_books, 1):
-                        response += f"{i}. {book['title']}\n"
-                else:
-                    response = "Похожие книги не найдены"
-                await callback.message.answer(response)
-
-            elif action == "rate_book":
-                # Показываем клавиатуру для оценки
-                keyboard = get_rating_keyboard(book_id)
-                await callback.message.answer("Оцените книгу:", reply_markup=keyboard)
-
-            elif action == "add_favorite":
-                # Добавляем книгу в избранное
-                result = await api.toggle_favorite(book_id)
-                if result.get("is_favorite"):
-                    await callback.message.answer("✅ Книга добавлена в избранное")
-                else:
-                    await callback.message.answer("❌ Книга удалена из избранного")
+            keyboard = get_books_keyboard(books["items"])
+            await callback.message.answer(response, reply_markup=keyboard)
+            await callback.answer()
 
     except Exception as e:
-        logger.error(f"Error processing book action: {str(e)}")
-        await callback.message.answer("Произошла ошибка. Пожалуйста, попробуйте позже.")
-
-    await callback.answer()
+        logger.error(f"Error processing category callback: {str(e)}")
+        await callback.answer("Произошла ошибка. Пожалуйста, попробуйте позже.")
 
 
-async def process_pagination(callback: CallbackQuery, state: FSMContext):
-    """Обработчик пагинации"""
-    action, page = callback.data.split("_page_")
-    page = int(page)
-
+async def process_author_callback(callback: CallbackQuery):
+    """Обработчик callback для авторов"""
     try:
+        author_id = int(callback.data.split("_")[1])
         async with BooksPortalAPI() as api:
-            if action == "search":
-                # Получаем сохраненный поисковый запрос
-                data = await state.get_data()
-                query = data.get("search_query", "")
+            books = await api.get_books_by_author(author_id, page=1, limit=5)
 
-                # Получаем результаты поиска для указанной страницы
-                results = await api.search_books(query=query, page=page, limit=3)
-                response = "📚 Результаты поиска:\n\n"
-                for i, book in enumerate(results["items"], 1):
-                    response += (
-                        f"{i}. 📖 {book['title']}\n"
-                        f"   👤 Автор: {book.get('author', 'Не указан')}\n"
-                        f"   ⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n\n"
-                    )
-                total_pages = (results["total"] + 2) // 3
-            elif action == "catalog":
-                # Получаем книги каталога для указанной страницы
-                books = await api.get_catalog(page=page, limit=3)
-                response = "📚 Каталог книг:\n\n"
-                for i, book in enumerate(books["items"], 1):
-                    response += (
-                        f"{i}. 📖 {book['title']}\n"
-                        f"   👤 Автор: {book.get('author', 'Не указан')}\n"
-                        f"   ⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n\n"
-                    )
-                total_pages = (books["total"] + 2) // 3
+            if not books or not books.get("items"):
+                await callback.answer("Книги этого автора не найдены.")
+                return
 
-            # Обновляем пагинацию
-            keyboard = get_pagination_keyboard(page, total_pages, action)
+            response = "📚 Книги автора:\n\n"
+            for book in books["items"]:
+                response += f"📖 {book['title']}\n" f"⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n\n"
 
-            await callback.message.edit_text(response, reply_markup=keyboard)
+            keyboard = get_books_keyboard(books["items"])
+            await callback.message.answer(response, reply_markup=keyboard)
+            await callback.answer()
 
     except Exception as e:
-        await callback.message.answer(f"Произошла ошибка при загрузке страницы: {str(e)}")
+        logger.error(f"Error processing author callback: {str(e)}")
+        await callback.answer("Произошла ошибка. Пожалуйста, попробуйте позже.")
 
-    await callback.answer()
+
+async def process_rating_callback(callback: CallbackQuery):
+    """Обработчик callback для оценки книг"""
+    try:
+        _, book_id, rating = callback.data.split("_")
+        book_id = int(book_id)
+        rating = int(rating)
+
+        async with BooksPortalAPI() as api:
+            success = await api.rate_book(book_id, rating)
+
+            if success:
+                await callback.answer(f"Спасибо за вашу оценку: {rating} ⭐")
+            else:
+                await callback.answer("Не удалось сохранить оценку.")
+
+    except Exception as e:
+        logger.error(f"Error processing rating callback: {str(e)}")
+        await callback.answer("Произошла ошибка при сохранении оценки.")
+
+
+async def process_pagination(callback: CallbackQuery):
+    """Обработчик пагинации"""
+    try:
+        page = int(callback.data.split("_")[-1])
+        async with BooksPortalAPI() as api:
+            books = await api.get_books(page=page, limit=5)
+
+            if not books or not books.get("items"):
+                await callback.answer("Больше книг не найдено.")
+                return
+
+            response = f"📚 Страница {page}:\n\n"
+            for book in books["items"]:
+                response += (
+                    f"📖 {book['title']}\n"
+                    f"👤 Авторы: {', '.join([author['name'] for author in book.get('authors', [])])}\n"
+                    f"⭐ Рейтинг: {book.get('rating', 'Нет оценок')}\n\n"
+                )
+
+            keyboard = get_books_keyboard(books["items"], page)
+            await callback.message.edit_text(response, reply_markup=keyboard)
+            await callback.answer()
+
+    except Exception as e:
+        logger.error(f"Error processing pagination: {str(e)}")
+        await callback.answer("Произошла ошибка при загрузке страницы.")

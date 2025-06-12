@@ -12,6 +12,14 @@ class Language(str, Enum):
     EN = "en"
 
 
+# Определяем Enum для типов рекомендаций
+class RecommendationType(str, Enum):
+    POPULAR = "popular"
+    COLLABORATIVE = "collaborative"
+    CONTENT_BASED = "content_based"
+    HYBRID = "hybrid"
+
+
 # Базовые схемы
 class AuthorBase(BaseModel):
     name: str
@@ -203,3 +211,31 @@ class UserRatingResponse(BaseModel):
 
     book: BookResponse
     user_rating: float = Field(..., description="Оценка пользователя", ge=1, le=5)
+
+
+# Схемы для рекомендаций
+class BookRecommendation(BaseModel):
+    """
+    Схема для рекомендации книги.
+    """
+
+    book: BookResponse
+    score: float = Field(..., description="Оценка релевантности рекомендации", ge=0, le=1)
+    reason: Optional[str] = Field(None, description="Причина рекомендации")
+    recommendation_type: RecommendationType = Field(..., description="Тип рекомендации")
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RecommendationStats(BaseModel):
+    """
+    Схема для статистики рекомендаций.
+    """
+
+    total_recommendations: int = Field(..., description="Общее количество рекомендаций")
+    popular_count: int = Field(..., description="Количество популярных рекомендаций")
+    collaborative_count: int = Field(..., description="Количество коллаборативных рекомендаций")
+    content_based_count: int = Field(..., description="Количество контентных рекомендаций")
+    hybrid_count: int = Field(..., description="Количество гибридных рекомендаций")
+    average_score: float = Field(..., description="Средний score рекомендаций", ge=0, le=1)
+    last_updated: datetime = Field(..., description="Время последнего обновления рекомендаций")
+    model_config = ConfigDict(from_attributes=True)

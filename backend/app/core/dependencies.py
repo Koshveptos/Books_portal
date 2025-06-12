@@ -1,134 +1,88 @@
-from typing import AsyncGenerator
+"""
+Модуль с зависимостями FastAPI.
+"""
 
-from auth import current_active_user
+from typing import AsyncGenerator, Optional
+
 from fastapi import Depends, HTTPException, status
-from models.user import User
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from app.core.database import AsyncSessionLocal
+from app.auth import current_active_user
+from app.core.database import get_db_session
 from app.core.logger_config import logger
+from app.core.redis import get_redis_client as get_redis_connection
+from app.core.redis import init_redis as init_redis_connection
+from app.models.user import User
 
 # Переиспользуем функцию current_active_user из auth модуля
 get_current_active_user = current_active_user
 
-# Создание объекта Redis-клиента или None, если не удалось подключиться
-redis_connection = None
+# Глобальная переменная для хранения Redis клиента
+redis_connection: Optional[Redis] = None
 
 
-async def init_redis():
+async def init_redis() -> None:
     """Инициализация Redis клиента"""
     global redis_connection
     try:
-        redis_connection = Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            db=settings.REDIS_DB,
-            password=settings.REDIS_PASSWORD,
-            decode_responses=True,
-            socket_timeout=5,
-        )
-        # Проверка соединения
-        await redis_connection.ping()
+        await init_redis_connection()
+        redis_connection = await get_redis_connection()
         logger.info("Redis client initialized successfully")
     except Exception as e:
-        logger.warning(f"Failed to initialize Redis client: {str(e)}")
+        logger.error(
+            "Failed to initialize Redis client", extra={"error": str(e), "error_type": type(e).__name__}, exc_info=True
+        )
+        # Не выбрасываем исключение, а просто логируем ошибку
+        logger.warning("Application will continue without Redis")
         redis_connection = None
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_redis_client() -> Optional[Redis]:
     """
-    Зависимость для получения сессии базы данных.
-    Создает новую сессию для каждого запроса и закрывает ее после завершения запроса.
+    Получение Redis клиента.
+
+    Returns:
+        Optional[Redis]: Redis клиент или None в случае ошибки
     """
-    async with AsyncSessionLocal() as session:
+    global redis_connection
+    if not redis_connection:
         try:
-            yield session
-        finally:
-            await session.close()
-
-
-async def get_redis_client() -> Redis:
-    """
-    Зависимость для получения Redis-клиента.
-    Возвращает глобальный Redis-клиент или None, если подключение невозможно.
-    """
-    if redis_connection is None:
-        await init_redis()
+            redis_connection = await get_redis_connection()
+        except Exception as e:
+            logger.error(
+                "Failed to get Redis client", extra={"error": str(e), "error_type": type(e).__name__}, exc_info=True
+            )
+            return None
     return redis_connection
 
 
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Зависимость для получения сессии базы данных"""
+    async with get_db_session() as session:
+        try:
+            yield session
+        except Exception as e:
+            logger.error(f"Database session error: {str(e)}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error occurred")
+
+
 async def check_moderator_permission(user: User = Depends(current_active_user)):
-    """
-    Проверяет, имеет ли пользователь права модератора.
-
-    Аргументы:
-        user: Текущий авторизованный пользователь
-
-    Возвращает:
-        True, если проверка пройдена успешно
-
-    Вызывает:
-        HTTPException: Если пользователь не имеет прав модератора
-    """
-    logger.debug(f"Checking moderator permission for user {user.email} (id: {user.id})")
-
+    """Проверка прав модератора"""
     if not user.is_moderator:
-        logger.warning(
-            f"Permission denied: User {user.email} (id: {user.id}) " f"attempted to access moderator resource"
-        )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Для доступа требуются права модератора")
-
-    logger.debug(f"Moderator permission granted for user {user.email} (id: {user.id})")
-    return True
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+    return user
 
 
 async def check_admin_permission(user: User = Depends(current_active_user)):
-    """
-    Проверяет, имеет ли пользователь права администратора.
-
-    Аргументы:
-        user: Текущий авторизованный пользователь
-
-    Возвращает:
-        True, если проверка пройдена успешно
-
-    Вызывает:
-        HTTPException: Если пользователь не имеет прав администратора
-    """
-    logger.debug(f"Checking admin permission for user {user.email} (id: {user.id})")
-
+    """Проверка прав администратора"""
     if not user.is_superuser:
-        logger.warning(f"Permission denied: User {user.email} (id: {user.id}) " f"attempted to access admin resource")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Для доступа требуются права администратора")
-
-    logger.debug(f"Admin permission granted for user {user.email} (id: {user.id})")
-    return True
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+    return user
 
 
 async def check_moderator_or_admin_permission(user: User = Depends(current_active_user)):
-    """
-    Проверяет, имеет ли пользователь права модератора или администратора.
-
-    Аргументы:
-        user: Текущий авторизованный пользователь
-
-    Возвращает:
-        True, если проверка пройдена успешно
-
-    Вызывает:
-        HTTPException: Если пользователь не имеет прав модератора или администратора
-    """
-    logger.debug(f"Checking moderator or admin permission for user {user.email} (id: {user.id})")
-
-    if not user.is_moderator and not user.is_superuser:
-        logger.warning(
-            f"Permission denied: User {user.email} (id: {user.id}) " f"attempted to access moderator/admin resource"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Для доступа требуются права модератора или администратора"
-        )
-
-    logger.debug(f"Moderator or admin permission granted for user {user.email} (id: {user.id})")
-    return True
+    """Проверка прав модератора или администратора"""
+    if not (user.is_moderator or user.is_superuser):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+    return user

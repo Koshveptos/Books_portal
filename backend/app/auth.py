@@ -16,16 +16,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Импорты из core
+from app.core.config import settings
 from app.core.database import get_db
-from app.core.exceptions import PermissionDeniedException
+from app.core.exceptions import (
+    AuthenticationException,
+    PermissionDeniedException,
+    UserAlreadyExistsException,
+)
 from app.core.logger_config import logger
 
 # Импортируем схемы пользователя
 from app.schemas.user import UserCreate
-
-# Секреты для JWT
-ACCESS_TOKEN_SECRET = "your_access_token_secret"
-REFRESH_TOKEN_SECRET = "your_refresh_token_secret"
 
 # Настройка Bearer-транспорта
 bearer_transport = BearerTransport(tokenUrl="/auth/jwt/login")
@@ -33,11 +34,32 @@ bearer_transport = BearerTransport(tokenUrl="/auth/jwt/login")
 
 # Настройка JWT-стратегии
 def get_jwt_strategy() -> JWTStrategy:
-    return JWTStrategy(
-        secret=ACCESS_TOKEN_SECRET,
-        lifetime_seconds=3600,
-        token_audience=["fastapi-users:auth"],
-    )
+    """Создает и возвращает JWT стратегию аутентификации"""
+    try:
+        if not settings.JWT_SECRET_KEY:
+            logger.error("Отсутствует секретный ключ JWT")
+            raise AuthenticationException("Ошибка конфигурации JWT")
+
+        if not settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES:
+            logger.error("Не задано время жизни токена")
+            raise AuthenticationException("Ошибка конфигурации JWT")
+
+        strategy = JWTStrategy(
+            secret=settings.JWT_SECRET_KEY,
+            lifetime_seconds=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            token_audience=["fastapi-users:auth"],
+        )
+
+        if not strategy:
+            logger.error("Не удалось создать JWT стратегию")
+            raise AuthenticationException("Ошибка создания JWT стратегии")
+
+        return strategy
+    except AuthenticationException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при создании JWT стратегии: {str(e)}")
+        raise AuthenticationException("Ошибка настройки аутентификации")
 
 
 # Настройка AuthenticationBackend
@@ -50,105 +72,183 @@ auth_backend = AuthenticationBackend(
 
 # Настройка базы данных пользователей
 async def get_user_db(session: AsyncSession = Depends(get_db)) -> SQLAlchemyUserDatabase:
-    return SQLAlchemyUserDatabase(session, User)
+    """Создает и возвращает экземпляр базы данных пользователей"""
+    try:
+        if not session:
+            logger.error("Сессия базы данных не инициализирована")
+            raise AuthenticationException("Ошибка доступа к базе данных")
+
+        user_db = SQLAlchemyUserDatabase(session, User)
+        if not user_db:
+            logger.error("Не удалось создать базу данных пользователей")
+            raise AuthenticationException("Ошибка создания базы данных пользователей")
+
+        return user_db
+    except AuthenticationException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при создании базы данных пользователей: {str(e)}")
+        raise AuthenticationException("Ошибка доступа к базе данных пользователей")
 
 
 # Класс менеджера пользователей
 class UserManager(BaseUserManager[User, int]):
-    reset_password_token_secret = ACCESS_TOKEN_SECRET
-    verification_token_secret = ACCESS_TOKEN_SECRET
+    """Менеджер пользователей с расширенной функциональностью"""
+
+    reset_password_token_secret = settings.JWT_SECRET_KEY
+    verification_token_secret = settings.JWT_SECRET_KEY
 
     async def on_after_register(self, user: User, request=None):
-        print(f"User {user.id} has registered.")
+        """Обработчик события после регистрации пользователя"""
+        logger.info(f"Пользователь {user.id} успешно зарегистрирован")
+        try:
+            # Здесь можно добавить дополнительную логику после регистрации
+            pass
+        except Exception as e:
+            logger.error(f"Ошибка в обработчике after_register: {str(e)}")
 
     async def on_after_forgot_password(self, user: User, token: str, request=None):
-        print(f"User {user.id} has forgot their password. Reset token: {token}")
+        """Обработчик события после запроса сброса пароля"""
+        logger.info(f"Пользователь {user.id} запросил сброс пароля")
+        try:
+            # Здесь можно добавить отправку email с токеном
+            pass
+        except Exception as e:
+            logger.error(f"Ошибка в обработчике after_forgot_password: {str(e)}")
 
     async def on_after_request_verify(self, user: User, token: str, request=None):
-        print(f"Verification requested for user {user.id}. Verification token: {token}")
+        """Обработчик события после запроса верификации"""
+        logger.info(f"Запрошена верификация для пользователя {user.id}")
+        try:
+            # Здесь можно добавить отправку email с токеном верификации
+            pass
+        except Exception as e:
+            logger.error(f"Ошибка в обработчике after_request_verify: {str(e)}")
 
-    # Реализация метода parse_id для обработки идентификаторов пользователей
     def parse_id(self, user_id: str) -> int:
         """
         Преобразует строковый ID пользователя в целочисленный.
-        Этот метод необходим для работы JWT аутентификации.
+
+        Args:
+            user_id: Строковый ID пользователя
+
+        Returns:
+            int: Целочисленный ID пользователя
+
+        Raises:
+            ValueError: Если ID имеет неверный формат
         """
         try:
             return int(user_id)
         except ValueError:
-            logger.error(f"Failed to parse user_id: {user_id}")
-            raise ValueError(f"Invalid user ID format: {user_id}")
+            logger.error(f"Ошибка преобразования ID пользователя: {user_id}")
+            raise ValueError(f"Неверный формат ID пользователя: {user_id}")
 
     async def create(self, user_create: UserCreate, safe: bool = False, **kwargs) -> User:
-        try:
-            logger.info("Starting user creation process")
-            user_dict = user_create.model_dump()
-            logger.info(f"User data after dict conversion: {user_dict}")
+        """
+        Создает нового пользователя.
 
-            # Проверяем наличие пароля
+        Args:
+            user_create: Данные для создания пользователя
+            safe: Флаг безопасного создания
+            **kwargs: Дополнительные параметры
+
+        Returns:
+            User: Созданный пользователь
+
+        Raises:
+            HTTPException: При ошибках создания пользователя
+        """
+        try:
+            logger.info("Начало процесса создания пользователя")
+            user_dict = user_create.model_dump()
+
+            # Проверка наличия пароля
             if "password" not in user_dict:
-                logger.error("Password field is missing in user data")
+                logger.error("Отсутствует поле пароля в данных пользователя")
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пароль обязателен для регистрации")
 
-            # Проверяем права доступа только если safe=True
+            # Проверка прав доступа
             if safe and (user_dict.get("is_superuser") or user_dict.get("is_moderator")):
-                logger.warning(f"Attempt to register with elevated privileges: {user_dict.get('email')}")
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Невозможно создать пользователя с повышенными привилегиями",
-                )
+                logger.warning(f"Попытка регистрации с повышенными привилегиями: {user_dict.get('email')}")
+                raise PermissionDeniedException("Невозможно создать пользователя с повышенными привилегиями")
 
-            logger.info(f"User parameters before save: {user_dict}")
+            # Хеширование пароля
             user_dict["hashed_password"] = self.password_helper.hash(user_dict.pop("password"))
-            logger.info("Password hashed successfully")
+            logger.info("Пароль успешно хеширован")
 
-            logger.info(f"Creating new user: {user_dict['email']}")
+            # Создание пользователя
             try:
                 created_user = await self.user_db.create(user_dict)
-                logger.info(f"User created successfully in database: {created_user.email}")
-                print(f"User {created_user.id} has registered.")
-                logger.info(f"User registration completed: {created_user.email}")
+                logger.info(f"Пользователь успешно создан: {created_user.email}")
                 return created_user
             except IntegrityError as e:
                 if "users_email_key" in str(e) or "ix_users_email" in str(e):
-                    logger.warning(f"Attempt to register with existing email: {user_dict['email']}")
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT, detail="Пользователь с таким email уже существует"
-                    )
-                logger.error(f"Database integrity error during user creation: {str(e)}")
+                    logger.warning(f"Попытка регистрации с существующим email: {user_dict['email']}")
+                    raise UserAlreadyExistsException()
+                logger.error(f"Ошибка целостности данных при создании пользователя: {str(e)}")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Ошибка целостности данных при создании пользователя",
                 )
-            except Exception as e:
-                logger.error(f"Unexpected error during user creation: {str(e)}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка при создании пользователя"
-                )
         except HTTPException:
             raise
         except Exception as e:
-            logger.exception(f"Error during user creation: {str(e)}")
+            logger.exception(f"Непредвиденная ошибка при создании пользователя: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка при создании пользователя"
             )
 
-    async def update(self, user_update, user, **kwargs):
-        # Проверяем, что только суперпользователь может менять is_moderator или is_superuser
-        if not user.is_superuser:
-            user_dict = user_update.dict(exclude_unset=True)
-            if "is_moderator" in user_dict or "is_superuser" in user_dict:
-                logger.warning(f"User {user.email} (id: {user.id}) attempted to update privileged fields")
-                raise ValueError("Only superusers can update privileged status fields")
+    async def update(self, user_update, user: User, **kwargs) -> User:
+        """
+        Обновляет данные пользователя.
 
-        logger.info(f"Updating user: {user.email} (id: {user.id})")
-        updated_user = await super().update(user_update, user, **kwargs)
-        logger.info(f"User updated successfully: {updated_user.email}")
-        return updated_user
+        Args:
+            user_update: Данные для обновления
+            user: Пользователь для обновления
+            **kwargs: Дополнительные параметры
+
+        Returns:
+            User: Обновленный пользователь
+
+        Raises:
+            ValueError: При попытке обновления привилегированных полей
+        """
+        try:
+            # Проверка прав на обновление привилегированных полей
+            if not user.is_superuser:
+                user_dict = user_update.dict(exclude_unset=True)
+                if "is_moderator" in user_dict or "is_superuser" in user_dict:
+                    logger.warning(f"Попытка обновления привилегированных полей пользователем {user.email}")
+                    raise PermissionDeniedException("Только администраторы могут обновлять привилегированные поля")
+
+            logger.info(f"Обновление пользователя: {user.email}")
+            updated_user = await super().update(user_update, user, **kwargs)
+            logger.info(f"Пользователь успешно обновлен: {updated_user.email}")
+            return updated_user
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении пользователя {user.email}: {str(e)}")
+            raise
 
 
-async def get_user_manager(user_db=Depends(get_user_db)):
-    yield UserManager(user_db)
+async def get_user_manager(user_db=Depends(get_user_db)) -> UserManager:
+    """Создает и возвращает менеджер пользователей"""
+    try:
+        if not user_db:
+            logger.error("База данных пользователей не инициализирована")
+            raise AuthenticationException("Ошибка доступа к базе данных пользователей")
+
+        manager = UserManager(user_db)
+        if not manager:
+            logger.error("Не удалось создать менеджер пользователей")
+            raise AuthenticationException("Ошибка создания менеджера пользователей")
+
+        yield manager
+    except AuthenticationException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при создании менеджера пользователей: {str(e)}")
+        raise AuthenticationException("Ошибка инициализации менеджера пользователей")
 
 
 # Инициализация FastAPIUsers
@@ -157,75 +257,88 @@ fastapi_users = FastAPIUsers[User, int](
     [auth_backend],
 )
 
-# Получение текущего пользователя
+# Зависимости для получения текущего пользователя
 current_active_user = fastapi_users.current_user(active=True, optional=False)
 current_required_user = fastapi_users.current_user(active=True)
-
-# Получение суперпользователя
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
 
 
-# Класс для проверки прав пользователя
 class PermissionChecker:
-    def __init__(self, require_superuser=False, require_moderator=False):
+    """Класс для проверки прав пользователя"""
+
+    def __init__(self, require_superuser: bool = False, require_moderator: bool = False):
         self.require_superuser = require_superuser
         self.require_moderator = require_moderator
 
-    async def __call__(self, user: User = Depends(current_active_user)):
-        try:
-            logger.debug(f"Checking permissions for user {user.email} (id: {user.id})")
+    async def __call__(self, user: User = Depends(current_active_user)) -> User:
+        """
+        Проверяет права пользователя.
 
-            # Проверка на суперпользователя (если требуется)
+        Args:
+            user: Пользователь для проверки
+
+        Returns:
+            User: Пользователь, если проверка пройдена
+
+        Raises:
+            PermissionDeniedException: При недостаточных правах
+        """
+        try:
+            logger.debug(f"Проверка прав для пользователя {user.email}")
+
+            # Проверка на суперпользователя
             if self.require_superuser and not user.is_superuser:
                 logger.warning(
-                    f"Permission denied: User {user.email} (id: {user.id}) "
-                    f"attempted to access superuser-only resource"
+                    f"Отказано в доступе: пользователь {user.email} попытался получить доступ к ресурсу администратора"
                 )
-                raise PermissionDeniedException(message="Для доступа требуются права администратора")
+                raise PermissionDeniedException("Для доступа требуются права администратора")
 
-            # Проверка на модератора (если требуется и пользователь не суперпользователь)
+            # Проверка на модератора
             if self.require_moderator and not user.is_moderator and not user.is_superuser:
                 logger.warning(
-                    f"Permission denied: User {user.email} (id: {user.id}) "
-                    f"attempted to access moderator-only resource"
+                    f"Отказано в доступе: пользователь {user.email} попытался получить доступ к ресурсу модератора"
                 )
-                raise PermissionDeniedException(message="Для доступа требуются права модератора или администратора")
+                raise PermissionDeniedException("Для доступа требуются права модератора или администратора")
 
-            logger.debug(f"Permission check passed for user {user.email} (id: {user.id})")
+            logger.debug(f"Проверка прав пройдена для пользователя {user.email}")
             return user
+        except PermissionDeniedException:
+            raise
         except Exception as e:
-            if isinstance(e, PermissionDeniedException):
-                raise
-            logger.error(f"Unexpected error during permission check for user {user.email}: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка при проверке прав доступа"
-            )
+            logger.error(f"Непредвиденная ошибка при проверке прав пользователя {user.email}: {str(e)}")
+            raise PermissionDeniedException("Ошибка при проверке прав доступа")
 
 
 # Зависимости для проверки прав
 admin_only = PermissionChecker(require_superuser=True)
 moderator_only = PermissionChecker(require_moderator=True)
-admin_or_moderator = PermissionChecker(require_moderator=True)  # суперпользователи автоматически имеют доступ
+admin_or_moderator = PermissionChecker(require_moderator=True)
 
 
-# Функция для проверки прав администратора
-async def check_admin(user: User = Depends(current_active_user)):
-    """Проверяет, имеет ли пользователь права администратора"""
+async def check_admin(user: User = Depends(current_active_user)) -> User:
+    """
+    Проверяет права администратора.
+
+    Args:
+        user: Пользователь для проверки
+
+    Returns:
+        User: Пользователь, если он администратор
+
+    Raises:
+        PermissionDeniedException: Если пользователь не администратор
+    """
     try:
         if not user.is_superuser:
-            logger.warning(
-                f"Admin access denied: User {user.email} (id: {user.id}) " f"attempted to access admin-only resource"
-            )
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Требуются права администратора")
-        logger.debug(f"Admin access granted for user {user.email} (id: {user.id})")
+            logger.warning(f"Отказано в доступе администратора: пользователь {user.email}")
+            raise PermissionDeniedException("Требуются права администратора")
+        logger.debug(f"Доступ администратора предоставлен пользователю {user.email}")
         return user
+    except PermissionDeniedException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        logger.error(f"Unexpected error during admin check for user {user.email}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка при проверке прав администратора"
-        )
+        logger.error(f"Непредвиденная ошибка при проверке прав администратора: {str(e)}")
+        raise PermissionDeniedException("Ошибка при проверке прав администратора")
 
 
 # Экспортируемые объекты

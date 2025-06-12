@@ -1,9 +1,11 @@
+import json
 from typing import List, Optional
 
 from auth import current_active_user
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from models.book import Book
 from models.user import User
+from redis import Redis
 from schemas.book import BookResponse
 from services.books import BooksService
 from sqlalchemy import select, text
@@ -11,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
+from app.core.dependencies import get_redis_client
 from app.core.exceptions import (
     DatabaseException,
     InvalidSearchQueryException,
@@ -18,73 +21,118 @@ from app.core.exceptions import (
     SearchException,
 )
 from app.core.logger_config import (
+    log_cache_error,
     log_db_error,
     log_info,
     log_warning,
 )
+from app.utils.json_serializer import deserialize_from_json, serialize_to_json
 
 router = APIRouter(tags=["search"])
 
 
 @router.get("/", response_model=List[BookResponse])
 async def search_books(
-    q: str = Query(..., min_length=3, description="Поисковый запрос (минимум 3 символа)"),
-    limit: int = Query(10, ge=1, le=50, description="Максимальное количество результатов"),
-    field: Optional[str] = Query(
-        None, description="Поле для поиска (title, description или пусто для поиска по всем полям)"
-    ),
+    q: str = Query(..., min_length=1, description="Поисковый запрос"),
+    limit: int = Query(10, ge=1, le=100, description="Максимальное количество результатов"),
     db: AsyncSession = Depends(get_db),
-):
+    redis_client: Redis = Depends(get_redis_client),
+    use_cache: bool = Query(True, description="Использовать кэширование"),
+) -> List[BookResponse]:
     """
-    Полнотекстовый поиск книг по названию и описанию.
-    Публичный эндпоинт, доступный без авторизации.
+    Поиск книг по запросу.
 
-    Запрос должен содержать минимум 3 символа.
-    Результаты сортируются по релевантности.
+    Args:
+        q: Поисковый запрос
+        limit: Максимальное количество результатов
+        db: Сессия базы данных
+        redis_client: Клиент Redis
+        use_cache: Использовать кэширование
 
-    Поддерживаются операторы логики:
-    - & (AND): слово1 & слово2
-    - | (OR): слово1 | слово2
-    - ! (NOT): !слово
+    Returns:
+        List[BookResponse]: Список найденных книг
 
-    Для поиска фраз используйте кавычки: "точная фраза"
-
-    Для поиска с учетом морфологии используйте суффикс :*
-    Например: книг:* найдет "книга", "книги", "книгой" и т.д.
-
-    Если операторы не указаны, по умолчанию используется AND с учетом морфологии.
+    Raises:
+        HTTPException: Если произошла ошибка при поиске
     """
     try:
-        log_info(f"Searching for: '{q}'{f' in field {field}' if field else ''}")
+        log_info(f"Searching for: '{q}'")
 
-        books_service = BooksService(db)
-        books = await books_service.search_books(q, limit, field)
-
-        if not books:
-            log_info(f"No books found for query: '{q}'")
-            return []
-
-        log_info(f"Found {len(books)} books for query: '{q}'")
-
-        book_responses = []
-        for book in books:
-            if not (hasattr(book, "_sa_instance_state") and not book._sa_instance_state.unloaded):
-                book_id = book.id
-                query = (
-                    select(Book)
-                    .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
-                    .where(Book.id == book_id)
+        # Пытаемся получить результаты из кэша
+        if use_cache and redis_client is not None:
+            try:
+                cache_key = f"search:{q}:{limit}"
+                cached_results = await redis_client.get(cache_key)
+                if cached_results:
+                    try:
+                        results_data = deserialize_from_json(cached_results)
+                        log_info(
+                            f"Successfully retrieved {len(results_data)} search results from cache for query '{q}'"
+                        )
+                        return [BookResponse(**book) for book in results_data]
+                    except json.JSONDecodeError as e:
+                        log_cache_error(
+                            e,
+                            {
+                                "operation": "parse_cached_search_results",
+                                "key": cache_key,
+                                "error_type": type(e).__name__,
+                                "error_details": str(e),
+                            },
+                        )
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "get_search_results",
+                        "key": cache_key,
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
                 )
-                result = await db.execute(query)
-                book = result.scalar_one()
 
-            book_responses.append(BookResponse.model_validate(book))
+        # Выполняем поиск
+        log_info(f"Выполняется полнотекстовый поиск: '{q}'")
+        search_service = BooksService(db)
+        books = await search_service.search_books(q, limit=limit)
+
+        log_info(f"Найдено {len(books)} книг по запросу '{q}'")
+
+        # Преобразуем в Pydantic модели
+        book_responses = [BookResponse.model_validate(book) for book in books]
+
+        # Сохраняем в кэш
+        if use_cache and redis_client is not None:
+            try:
+                await redis_client.set(
+                    cache_key,
+                    serialize_to_json(book_responses),
+                    expire=3600,  # 1 час
+                )
+                log_info(f"Successfully cached search results for query '{q}'")
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "cache_search_results",
+                        "key": cache_key,
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
 
         return book_responses
-
     except Exception as e:
-        log_db_error(e, operation="search_books", query=q, field=field)
-        raise SearchException("Ошибка при выполнении поиска")
+        log_db_error(
+            e,
+            {
+                "operation": "search_books",
+                "query": q,
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка при выполнении поиска")
 
 
 @router.get("/by-author", response_model=List[BookResponse])

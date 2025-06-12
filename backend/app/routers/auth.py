@@ -7,18 +7,18 @@ from fastapi import APIRouter
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-from app.auth import auth_backend, fastapi_users
-from app.core.exceptions import (
+from auth import auth_backend, fastapi_users
+from core.exceptions import (
     AuthenticationException,
     CredentialsException,
     TokenExpiredException,
 )
-from app.core.logger_config import (
+from core.logger_config import (
     log_auth_error,
     log_auth_info,
     log_auth_warning,
 )
-from app.schemas.user import LogoutResponse, TokenResponse, UserCreate, UserRead
+from schemas.user import LogoutResponse, TokenResponse, UserCreate, UserRead
 
 from .user import logout, protected_route, refresh_token
 

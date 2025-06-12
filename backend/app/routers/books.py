@@ -1,10 +1,41 @@
+"""
+Маршруты для работы с книгами.
+"""
+
+import json
 from typing import List
 
-from auth import current_active_user
-from fastapi import APIRouter, Depends, Query, status
-from models.book import Author, Book, Category, Tag
-from models.user import User
-from schemas.book import (
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
+from sqlalchemy import select
+from sqlalchemy.engine import Result
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.auth import current_active_user
+from app.core.dependencies import get_db, get_redis_client
+from app.core.exceptions import (
+    BookNotFoundException,
+    CategoryNotFoundException,
+    DatabaseException,
+    InvalidBookDataException,
+    InvalidCategoryDataException,
+    InvalidTagDataException,
+    PermissionDeniedException,
+    ResourceNotFoundException,
+)
+from app.core.logger_config import (
+    log_cache_error,
+    log_db_error,
+    log_info,
+    log_validation_error,
+    log_warning,
+)
+from app.models.book import Author, Book, Category, Tag
+from app.models.user import User
+from app.schemas.book import (
     AuthorResponse,
     BookCreate,
     BookPartial,
@@ -16,31 +47,8 @@ from schemas.book import (
     TagResponse,
     UserRatingResponse,
 )
-from sqlalchemy import select
-from sqlalchemy.engine import Result
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
-from app.core.database import get_db
-from app.core.exceptions import (
-    AuthorNotFoundException,
-    BookNotFoundException,
-    CategoryNotFoundException,
-    DatabaseException,
-    InvalidBookDataException,
-    InvalidCategoryDataException,
-    InvalidTagDataException,
-    PermissionDeniedException,
-    ResourceNotFoundException,
-)
-from app.core.logger_config import (
-    log_db_error,
-    log_info,
-    log_validation_error,
-    log_warning,
-)
 from app.services.book import BookService
+from app.utils.json_serializer import deserialize_from_json, serialize_to_json
 
 router = APIRouter(tags=["books"])
 books_router = APIRouter(tags=["books"])
@@ -48,18 +56,56 @@ books_router = APIRouter(tags=["books"])
 # Маршруты поиска и обновления векторов перенесены в routers/search.py
 
 
-@router.get("/", response_model=list[BookResponse])
+@router.get("/", response_model=List[BookResponse])
 async def get_books(
     db: AsyncSession = Depends(get_db),
+    redis_client: Redis = Depends(get_redis_client),
+    limit: int = Query(20, ge=1, le=100, description="Максимальное количество результатов"),
+    skip: int = Query(0, ge=0, description="Количество пропускаемых записей"),
+    use_cache: bool = True,
 ):
     """
     Получить список всех книг. Публичный эндпоинт.
     """
     try:
         log_info("Getting all books")
+
+        # Пытаемся получить книги из кэша
+        if use_cache and redis_client is not None:
+            try:
+                cached_books = await redis_client.get(f"books:all:{skip}:{limit}")
+                if cached_books:
+                    try:
+                        books_data = deserialize_from_json(cached_books)
+                        log_info(f"Successfully retrieved {len(books_data)} books from cache")
+                        return [BookResponse(**book) for book in books_data]
+                    except json.JSONDecodeError as e:
+                        log_cache_error(
+                            e,
+                            {
+                                "operation": "parse_cached_books",
+                                "key": f"books:all:{skip}:{limit}",
+                                "error_type": type(e).__name__,
+                                "error_details": str(e),
+                            },
+                        )
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "get_books",
+                        "key": f"books:all:{skip}:{limit}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        # Если кэш недоступен или пуст, получаем из БД
         query = (
             select(Book)
             .order_by(Book.id)
+            .offset(skip)
+            .limit(limit)
             .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
         )
         result: Result = await db.execute(query)
@@ -81,16 +127,69 @@ async def get_books(
 
                 book_responses.append(BookResponse.model_validate(book))
             except Exception as e:
-                log_db_error(e, operation="get_books_validation", table="books", book_id=str(book.id))
+                log_db_error(
+                    e,
+                    {
+                        "operation": "get_books_validation",
+                        "table": "books",
+                        "book_id": str(book.id),
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
                 continue  # Пропускаем книгу с ошибкой валидации
 
+        if not book_responses:
+            log_info("No books found")
+            return JSONResponse(
+                status_code=status.HTTP_204_NO_CONTENT,
+                content={"message": "Книги не найдены"},
+            )
+
         log_info(f"Successfully retrieved {len(book_responses)} books")
+
+        # Сохраняем в кэш
+        if use_cache and redis_client is not None:
+            try:
+                await redis_client.set(
+                    f"books:all:{skip}:{limit}",
+                    serialize_to_json(book_responses),
+                    expire=3600,  # 1 час
+                )
+                log_info(f"Successfully cached {len(book_responses)} books")
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "cache_books",
+                        "key": f"books:all:{skip}:{limit}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
         return book_responses
     except SQLAlchemyError as e:
-        log_db_error(e, operation="get_all_books", table="books")
+        log_db_error(
+            e,
+            {
+                "operation": "get_all_books",
+                "table": "books",
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
         raise DatabaseException("Ошибка при получении списка книг из базы данных")
     except Exception as e:
-        log_db_error(e, operation="get_all_books", table="books")
+        log_db_error(
+            e,
+            {
+                "operation": "get_all_books",
+                "table": "books",
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
         raise DatabaseException("Непредвиденная ошибка при получении списка книг")
 
 
@@ -98,12 +197,57 @@ async def get_books(
 async def get_book(
     book_id: int,
     db: AsyncSession = Depends(get_db),
-):
+    redis_client: Redis = Depends(get_redis_client),
+) -> BookResponse:
     """
-    Получить книгу по её ID. Публичный эндпоинт.
+    Получение книги по ID.
+
+    Args:
+        book_id: ID книги
+        db: Сессия базы данных
+        redis_client: Клиент Redis
+
+    Returns:
+        BookResponse: Информация о книге
+
+    Raises:
+        HTTPException: Если книга не найдена или произошла ошибка
     """
     try:
         log_info(f"Getting book with ID: {book_id}")
+
+        # Пытаемся получить книгу из кэша
+        if redis_client is not None:
+            try:
+                cache_key = f"book:{book_id}"
+                cached_book = await redis_client.get(cache_key)
+                if cached_book:
+                    try:
+                        book_data = deserialize_from_json(cached_book)
+                        log_info(f"Successfully retrieved book {book_id} from cache")
+                        return BookResponse(**book_data)
+                    except json.JSONDecodeError as e:
+                        log_cache_error(
+                            e,
+                            {
+                                "operation": "parse_cached_book",
+                                "key": cache_key,
+                                "error_type": type(e).__name__,
+                                "error_details": str(e),
+                            },
+                        )
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "get_book",
+                        "key": cache_key,
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        # Если кэш недоступен или пуст, получаем из БД
         query = (
             select(Book)
             .options(selectinload(Book.authors), selectinload(Book.categories), selectinload(Book.tags))
@@ -114,18 +258,45 @@ async def get_book(
 
         if not book:
             log_warning(f"Book with ID {book_id} not found")
-            raise BookNotFoundException(f"Книга с ID {book_id} не найдена")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Книга с ID {book_id} не найдена")
 
+        book_response = BookResponse.model_validate(book)
         log_info(f"Successfully retrieved book with ID: {book_id}")
-        return BookResponse.model_validate(book)
-    except BookNotFoundException:
+
+        # Сохраняем в кэш
+        if redis_client is not None:
+            try:
+                await redis_client.set(
+                    cache_key,
+                    serialize_to_json(book_response),
+                    expire=3600,  # 1 час
+                )
+                log_info(f"Successfully cached book {book_id}")
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "cache_book",
+                        "key": cache_key,
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        return book_response
+    except HTTPException:
         raise
-    except SQLAlchemyError as e:
-        log_db_error(e, operation="get_book", table="books", book_id=str(book_id))
-        raise DatabaseException("Ошибка при получении книги из базы данных")
     except Exception as e:
-        log_db_error(e, operation="get_book", table="books", book_id=str(book_id))
-        raise DatabaseException("Непредвиденная ошибка при получении книги")
+        log_db_error(
+            e,
+            {
+                "operation": "get_book",
+                "book_id": book_id,
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка при получении книги")
 
 
 # Добавляем те же роуты к books_router для доступа через прямой URL
@@ -610,11 +781,13 @@ async def get_books_by_category(
         raise DatabaseException("Непредвиденная ошибка при получении книг по категории")
 
 
-@router.get("/by-author/{author_id}", response_model=list[BookResponse])
+@router.get("/by-author/{author_id}", response_model=List[BookResponse])
 async def get_books_by_author(
     author_id: int,
     limit: int = Query(20, ge=1, le=100, description="Максимальное количество результатов"),
+    skip: int = Query(0, ge=0, description="Количество пропускаемых записей"),
     db: AsyncSession = Depends(get_db),
+    redis_client: Redis = Depends(get_redis_client),
 ):
     """
     Получить список книг по автору.
@@ -622,80 +795,208 @@ async def get_books_by_author(
     Args:
         author_id: ID автора
         limit: Максимальное количество результатов
+        skip: Количество пропускаемых записей
     """
     try:
         log_info(f"Getting books by author ID: {author_id}")
+
+        # Пытаемся получить книги из кэша
+        if redis_client is not None:
+            try:
+                cached_books = await redis_client.get(f"books:author:{author_id}:{skip}:{limit}")
+                if cached_books:
+                    try:
+                        books = deserialize_from_json(cached_books)
+                        log_info(f"Successfully retrieved {len(books)} books from cache for author {author_id}")
+                        return books
+                    except json.JSONDecodeError as e:
+                        log_cache_error(
+                            e,
+                            {
+                                "operation": "parse_cached_author_books",
+                                "key": f"books:author:{author_id}:{skip}:{limit}",
+                                "error_type": type(e).__name__,
+                                "error_details": str(e),
+                            },
+                        )
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "get_books_by_author",
+                        "key": f"books:author:{author_id}:{skip}:{limit}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
 
         # Проверяем существование автора
         author = await db.execute(select(Author).where(Author.id == author_id))
         if not author.scalar_one_or_none():
             log_warning(f"Author with ID {author_id} not found")
-            raise AuthorNotFoundException(f"Автор с ID {author_id} не найден")
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={"message": f"Автор с ID {author_id} не найден"},
+            )
 
         books_service = BookService(db)
-        books = await books_service.get_books(author_id=author_id, limit=limit)
+        books = await books_service.get_books(author_id=author_id, limit=limit, skip=skip)
 
         if not books:
             log_info(f"No books found for author ID: {author_id}")
-            return []
+            return JSONResponse(
+                status_code=status.HTTP_204_NO_CONTENT,
+                content={"message": f"Книги автора с ID {author_id} не найдены"},
+            )
 
-        log_info(f"Found {len(books)} books for author ID: {author_id}")
-        return [BookResponse.model_validate(book) for book in books]
+        book_responses = [BookResponse.model_validate(book) for book in books]
+        log_info(f"Found {len(book_responses)} books for author ID: {author_id}")
 
-    except AuthorNotFoundException:
-        raise
+        # Сохраняем в кэш
+        if redis_client is not None:
+            try:
+                await redis_client.set(
+                    f"books:author:{author_id}:{skip}:{limit}", serialize_to_json(book_responses), expire=3600  # 1 час
+                )
+                log_info(f"Successfully cached {len(book_responses)} books for author {author_id}")
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "cache_author_books",
+                        "key": f"books:author:{author_id}:{skip}:{limit}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        return book_responses
+
     except SQLAlchemyError as e:
-        log_db_error(e, operation="get_books_by_author", table="books", author_id=str(author_id))
+        log_db_error(
+            e,
+            {
+                "operation": "get_books_by_author",
+                "table": "books",
+                "author_id": str(author_id),
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
         raise DatabaseException("Ошибка при получении книг по автору")
     except Exception as e:
-        log_db_error(e, operation="get_books_by_author", table="books", author_id=str(author_id))
+        log_db_error(
+            e,
+            {
+                "operation": "get_books_by_author",
+                "table": "books",
+                "author_id": str(author_id),
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
         raise DatabaseException("Непредвиденная ошибка при получении книг по автору")
-
-
-@router.get("/categories", response_model=List[CategoryResponse])
-async def get_categories(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(current_active_user),
-):
-    """
-    Получить список всех категорий.
-    """
-    try:
-        log_info(f"User {user.email} getting all categories")
-
-        query = select(Category).order_by(Category.name_categories)
-        result = await db.execute(query)
-        categories = result.scalars().all()
-
-        log_info(f"Found {len(categories)} categories")
-        return [CategoryResponse.model_validate(category) for category in categories]
-
-    except Exception as e:
-        log_db_error(e, operation="get_categories")
-        raise DatabaseException("Ошибка при получении списка категорий")
 
 
 @router.get("/authors", response_model=List[AuthorResponse])
 async def get_authors(
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(current_active_user),
+    redis_client: Redis = Depends(get_redis_client),
+    limit: int = Query(20, ge=1, le=100, description="Максимальное количество результатов"),
+    skip: int = Query(0, ge=0, description="Количество пропускаемых записей"),
 ):
     """
     Получить список всех авторов.
     """
     try:
-        log_info(f"User {user.email} getting all authors")
+        log_info("Getting all authors")
 
-        query = select(Author).order_by(Author.name)
+        # Пытаемся получить авторов из кэша
+        if redis_client is not None:
+            try:
+                cached_authors = await redis_client.get(f"authors:all:{skip}:{limit}")
+                if cached_authors:
+                    try:
+                        authors = deserialize_from_json(cached_authors)
+                        log_info(f"Successfully retrieved {len(authors)} authors from cache")
+                        return authors
+                    except json.JSONDecodeError as e:
+                        log_cache_error(
+                            e,
+                            {
+                                "operation": "parse_cached_authors",
+                                "key": f"authors:all:{skip}:{limit}",
+                                "error_type": type(e).__name__,
+                                "error_details": str(e),
+                            },
+                        )
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "get_authors",
+                        "key": f"authors:all:{skip}:{limit}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        query = select(Author).order_by(Author.name).offset(skip).limit(limit)
         result = await db.execute(query)
         authors = result.scalars().all()
 
-        log_info(f"Found {len(authors)} authors")
-        return [AuthorResponse.model_validate(author) for author in authors]
+        if not authors:
+            log_info("No authors found")
+            return JSONResponse(
+                status_code=status.HTTP_204_NO_CONTENT,
+                content={"message": "Авторы не найдены"},
+            )
 
+        author_responses = [AuthorResponse.model_validate(author) for author in authors]
+        log_info(f"Found {len(author_responses)} authors")
+
+        # Сохраняем в кэш
+        if redis_client is not None:
+            try:
+                await redis_client.set(
+                    f"authors:all:{skip}:{limit}", serialize_to_json(author_responses), expire=3600  # 1 час
+                )
+                log_info(f"Successfully cached {len(author_responses)} authors")
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "cache_authors",
+                        "key": f"authors:all:{skip}:{limit}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        return author_responses
+
+    except SQLAlchemyError as e:
+        log_db_error(
+            e,
+            {
+                "operation": "get_authors",
+                "table": "authors",
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
+        raise DatabaseException("Ошибка при получении списка авторов из базы данных")
     except Exception as e:
-        log_db_error(e, operation="get_authors")
-        raise DatabaseException("Ошибка при получении списка авторов")
+        log_db_error(
+            e,
+            {
+                "operation": "get_authors",
+                "table": "authors",
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
+        raise DatabaseException("Непредвиденная ошибка при получении списка авторов")
 
 
 @router.get("/user/likes", response_model=List[BookResponse])
@@ -734,6 +1035,7 @@ async def get_user_favorites(
     limit: int = Query(20, ge=1, le=100, description="Максимальное количество результатов"),
     skip: int = Query(0, ge=0, description="Количество пропускаемых записей"),
     db: AsyncSession = Depends(get_db),
+    redis_client: Redis = Depends(get_redis_client),
     user: User = Depends(current_active_user),
 ):
     """
@@ -742,21 +1044,92 @@ async def get_user_favorites(
     try:
         log_info(f"User {user.email} getting favorite books")
 
+        # Пытаемся получить избранные книги из кэша
+        if redis_client is not None:
+            try:
+                cached_books = await redis_client.get(f"favorites:{user.id}:{skip}:{limit}")
+                if cached_books:
+                    try:
+                        books = deserialize_from_json(cached_books)
+                        log_info(f"Successfully retrieved {len(books)} favorite books from cache for user {user.email}")
+                        return books
+                    except json.JSONDecodeError as e:
+                        log_cache_error(
+                            e,
+                            {
+                                "operation": "parse_cached_favorites",
+                                "key": f"favorites:{user.id}:{skip}:{limit}",
+                                "error_type": type(e).__name__,
+                                "error_details": str(e),
+                            },
+                        )
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "get_user_favorites",
+                        "key": f"favorites:{user.id}:{skip}:{limit}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
         books_service = BookService(db)
         books = await books_service.get_user_favorites(user.id, limit=limit, skip=skip)
 
         if not books:
             log_info(f"No favorite books found for user {user.email}")
-            return []
+            return JSONResponse(
+                status_code=status.HTTP_204_NO_CONTENT,
+                content={"message": "У вас пока нет книг в избранном"},
+            )
 
-        log_info(f"Found {len(books)} favorite books for user {user.email}")
-        return [BookResponse.model_validate(book) for book in books]
+        book_responses = [BookResponse.model_validate(book) for book in books]
+        log_info(f"Found {len(book_responses)} favorite books for user {user.email}")
+
+        # Сохраняем в кэш
+        if redis_client is not None:
+            try:
+                await redis_client.set(
+                    f"favorites:{user.id}:{skip}:{limit}", serialize_to_json(book_responses), expire=3600  # 1 час
+                )
+                log_info(f"Successfully cached {len(book_responses)} favorite books for user {user.email}")
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "cache_favorites",
+                        "key": f"favorites:{user.id}:{skip}:{limit}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        return book_responses
 
     except SQLAlchemyError as e:
-        log_db_error(e, operation="get_user_favorites", table="favorites", user_id=str(user.id))
+        log_db_error(
+            e,
+            {
+                "operation": "get_user_favorites",
+                "table": "favorites",
+                "user_id": str(user.id),
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
         raise DatabaseException("Ошибка при получении списка избранных книг из базы данных")
     except Exception as e:
-        log_db_error(e, operation="get_user_favorites", table="favorites", user_id=str(user.id))
+        log_db_error(
+            e,
+            {
+                "operation": "get_user_favorites",
+                "table": "favorites",
+                "user_id": str(user.id),
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
         raise DatabaseException("Непредвиденная ошибка при получении списка избранных книг")
 
 
@@ -765,6 +1138,7 @@ async def get_user_ratings(
     limit: int = Query(20, ge=1, le=100, description="Максимальное количество результатов"),
     skip: int = Query(0, ge=0, description="Количество пропускаемых записей"),
     db: AsyncSession = Depends(get_db),
+    redis_client: Redis = Depends(get_redis_client),
     user: User = Depends(current_active_user),
 ):
     """
@@ -773,22 +1147,93 @@ async def get_user_ratings(
     try:
         log_info(f"User {user.email} getting rated books")
 
+        # Пытаемся получить оценки из кэша
+        if redis_client is not None:
+            try:
+                cached_ratings = await redis_client.get(f"ratings:{user.id}:{skip}:{limit}")
+                if cached_ratings:
+                    try:
+                        ratings = deserialize_from_json(cached_ratings)
+                        log_info(f"Successfully retrieved {len(ratings)} ratings from cache for user {user.email}")
+                        return ratings
+                    except json.JSONDecodeError as e:
+                        log_cache_error(
+                            e,
+                            {
+                                "operation": "parse_cached_ratings",
+                                "key": f"ratings:{user.id}:{skip}:{limit}",
+                                "error_type": type(e).__name__,
+                                "error_details": str(e),
+                            },
+                        )
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "get_user_ratings",
+                        "key": f"ratings:{user.id}:{skip}:{limit}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
         books_service = BookService(db)
         books_with_ratings = await books_service.get_user_ratings(user.id, limit=limit, skip=skip)
 
         if not books_with_ratings:
             log_info(f"No rated books found for user {user.email}")
-            return []
+            return JSONResponse(
+                status_code=status.HTTP_204_NO_CONTENT,
+                content={"message": "У вас пока нет оцененных книг"},
+            )
 
-        log_info(f"Found {len(books_with_ratings)} rated books for user {user.email}")
-        return [
+        ratings = [
             UserRatingResponse(book=BookResponse.model_validate(book), user_rating=rating)
             for book, rating in books_with_ratings
         ]
+        log_info(f"Found {len(ratings)} rated books for user {user.email}")
+
+        # Сохраняем в кэш
+        if redis_client is not None:
+            try:
+                await redis_client.set(
+                    f"ratings:{user.id}:{skip}:{limit}", serialize_to_json(ratings), expire=3600  # 1 час
+                )
+                log_info(f"Successfully cached {len(ratings)} ratings for user {user.email}")
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "cache_ratings",
+                        "key": f"ratings:{user.id}:{skip}:{limit}",
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        return ratings
 
     except SQLAlchemyError as e:
-        log_db_error(e, operation="get_user_ratings", table="ratings", user_id=str(user.id))
+        log_db_error(
+            e,
+            {
+                "operation": "get_user_ratings",
+                "table": "ratings",
+                "user_id": str(user.id),
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
         raise DatabaseException("Ошибка при получении списка оцененных книг из базы данных")
     except Exception as e:
-        log_db_error(e, operation="get_user_ratings", table="ratings", user_id=str(user.id))
+        log_db_error(
+            e,
+            {
+                "operation": "get_user_ratings",
+                "table": "ratings",
+                "user_id": str(user.id),
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
         raise DatabaseException("Непредвиденная ошибка при получении списка оцененных книг")

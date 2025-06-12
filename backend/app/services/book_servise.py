@@ -13,6 +13,70 @@ class BookService:
         self.db = db
 
 
+class AuthorService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repository = AuthorRepository(db)
+
+    async def get_author(self, author_id: int) -> Author:
+        """
+        Получить автора по ID.
+
+        Args:
+            author_id: ID автора
+
+        Returns:
+            Author: Объект автора или None, если автор не найден
+        """
+        return await self.repository.get_by_id(author_id)
+
+    async def create_author(self, author_data: AuthorCreate) -> Author:
+        """
+        Создать нового автора.
+
+        Args:
+            author_data: Данные для создания автора
+
+        Returns:
+            Author: Созданный автор
+        """
+        return await self.repository.create(author_data)
+
+    async def update_author(self, author_id: int, author_data: AuthorUpdate) -> Author:
+        """
+        Обновить автора.
+
+        Args:
+            author_id: ID автора
+            author_data: Данные для обновления
+
+        Returns:
+            Author: Обновленный автор или None, если автор не найден
+        """
+        return await self.repository.update(author_id, author_data)
+
+    async def delete_author(self, author_id: int) -> bool:
+        """
+        Удалить автора.
+
+        Args:
+            author_id: ID автора
+
+        Returns:
+            bool: True если автор удален, False если автор не найден
+        """
+        return await self.repository.delete(author_id)
+
+    async def get_all_authors(self):
+        """
+        Получить всех авторов.
+
+        Returns:
+            List[Author]: Список всех авторов
+        """
+        return await self.repository.get_all()
+
+
 class AuthorRepository:
     def __init__(self, session: AsyncSession):
         self.session = session

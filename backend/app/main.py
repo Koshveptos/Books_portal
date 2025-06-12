@@ -1,18 +1,35 @@
 import asyncio
 import logging
-import os
 import sys
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict
 
 import uvicorn
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
-# Добавляем путь к приложению в sys.path для абсолютных импортов
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Добавляем корневую директорию проекта в PYTHONPATH
+sys.path.append(str(Path(__file__).parent.parent))
+
+from core.config import settings
+from core.database import init_db
+from core.dependencies import init_redis
+from core.exceptions import (
+    BookPortalException,
+)
+from core.logger_config import (
+    log_business_error,
+    log_db_error,
+    log_performance,
+    log_validation_error,
+    logger,
+)
+from core.middleware import setup_middleware
 
 # Импорты роутеров
 from routers.auth import router as auth_router
@@ -27,44 +44,68 @@ from routers.recommendations import router as recommendations_router
 from routers.search import router as search_router
 from routers.tags import router as tags_router
 from routers.user import router as users_router
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from app.bot.run_bot import run_bot
-from app.core.config import settings
-from app.core.dependencies import init_redis
-from app.core.exceptions import BookPortalException
-from app.core.logger_config import (
-    log_business_error,
-    log_critical_error,
-    log_db_error,
-    log_validation_error,
-    log_warning,
-)
+from bot.run_bot import start_bot, stop_bot
 
 # Настройка логгера
-logger = logging.getLogger("books_portal")
-logger.setLevel(logging.INFO)
+logger.setLevel(getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Контекстный менеджер для управления жизненным циклом приложения"""
-    logger.info("Application startup...")
+    start_time = time.time()
+    logger.info("Запуск приложения...")
 
-    # Инициализация Redis клиента
-    await init_redis()
+    # Список задач для очистки
+    cleanup_tasks = []
 
-    # Запускаем бота в фоновом режиме
-    bot_task = asyncio.create_task(run_bot())
-    yield
-    # Отменяем задачу бота при завершении работы приложения
-    bot_task.cancel()
     try:
-        await bot_task
-    except asyncio.CancelledError:
-        pass
+        # Инициализация базы данных
+        logger.info("Инициализация базы данных...")
+        await init_db()
+        logger.info("Database initialized successfully")
 
-    logger.info("Application shutdown...")
+        # Инициализация Redis
+        logger.info("Инициализация Redis...")
+        try:
+            await init_redis()
+            logger.info("Redis initialized successfully")
+        except Exception as e:
+            logger.error(
+                "Ошибка инициализации Redis", extra={"error": str(e), "error_type": type(e).__name__}, exc_info=True
+            )
+            logger.warning("Приложение будет работать без Redis")
+
+        # Запуск Telegram бота
+        logger.info("Запуск Telegram бота...")
+        bot_task = asyncio.create_task(start_bot())
+        cleanup_tasks.append(bot_task)
+        logger.info("Telegram bot started successfully")
+
+        yield
+
+        # Остановка всех задач
+        logger.info("Остановка приложения...")
+        for task in cleanup_tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        # Остановка Telegram бота
+        await stop_bot()
+        logger.info("Telegram bot stopped successfully")
+
+    except Exception as e:
+        logger.critical(f"Критическая ошибка при запуске приложения: {str(e)}", exc_info=True)
+        raise
+    finally:
+        duration = time.time() - start_time
+        log_performance("application_lifespan", duration)
+        logger.info("Завершение работы приложения...")
 
 
 app = FastAPI(
@@ -76,19 +117,22 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# Настраиваем CORS middleware для возможности запросов с фронтенда
+# Настраиваем CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # В продакшене нужно ограничить список разрешенных источников
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
 
-# Настраиваем и включаем все роутеры с правильными тегами
-app.include_router(auth_router)  # Подключаем auth_router первым
-app.include_router(users_router)  # Убираем prefix="/users", так как он уже есть в роутере
+# Настройка middleware
+setup_middleware(app)
+
+# Подключаем роутеры
+app.include_router(auth_router)
+app.include_router(users_router)
 app.include_router(books_router, prefix="/books", tags=["books"])
 app.include_router(flat_books_router, prefix="/books", tags=["flat_books"])
 app.include_router(authors_router, prefix="/authors", tags=["authors"])
@@ -100,161 +144,141 @@ app.include_router(likes_router, prefix="/likes", tags=["likes"])
 app.include_router(favorites_router, prefix="/favorites", tags=["favorites"])
 app.include_router(ratings_router, prefix="/ratings", tags=["ratings"])
 
+logger.info("Все роутеры успешно подключены")
+
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the Books API"}
+    """Корневой эндпоинт для проверки работоспособности API"""
+    logger.debug("Получен запрос к корневому эндпоинту")
+    return {
+        "message": "Welcome to Books Portal API",
+        "version": settings.VERSION,
+        "docs_url": "/docs",
+        "redoc_url": "/redoc",
+    }
 
 
-# Middleware для логирования каждого запроса
+@app.get("/health")
+async def health_check():
+    """
+    Эндпоинт для проверки здоровья приложения.
+    """
+    return {"status": "healthy", "version": settings.VERSION}
+
+
+# Middleware для логирования запросов
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    """Middleware для логирования всех HTTP запросов"""
     start_time = time.time()
     request_id = request.headers.get("X-Request-ID", "-")
-    logger.debug(f"[{request_id}] Request started: {request.method} {request.url.path}")
+
+    # Логируем начало запроса
+    logger.debug(
+        f"[{request_id}] Начало запроса: {request.method} {request.url.path}",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "client": request.client.host if request.client else "Unknown",
+            "user_agent": request.headers.get("user-agent", "Unknown"),
+        },
+    )
+
     try:
         response = await call_next(request)
         process_time = time.time() - start_time
-        status_code = response.status_code
-        log_message = (
-            f"[{request_id}] Request completed: {request.method} {request.url.path} - "
-            f"Status: {status_code} - Took: {process_time:.4f}s"
-        )
 
-        # Логгируем с разным уровнем в зависимости от статуса
-        if status_code >= 500:
-            logger.error(log_message)
-        elif status_code >= 400:
-            logger.warning(log_message)
+        # Формируем контекст для логирования
+        log_context: Dict[str, Any] = {
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "process_time": process_time,
+            "client": request.client.host if request.client else "Unknown",
+        }
+
+        # Логируем с разным уровнем в зависимости от статуса
+        if response.status_code >= 500:
+            logger.error(
+                f"[{request_id}] Ошибка сервера: {request.method} {request.url.path} - "
+                f"Статус: {response.status_code} - Время: {process_time:.4f}с",
+                extra=log_context,
+            )
+        elif response.status_code >= 400:
+            logger.warning(
+                f"[{request_id}] Ошибка клиента: {request.method} {request.url.path} - "
+                f"Статус: {response.status_code} - Время: {process_time:.4f}с",
+                extra=log_context,
+            )
         else:
-            logger.info(log_message)
+            logger.info(
+                f"[{request_id}] Успешный запрос: {request.method} {request.url.path} - "
+                f"Статус: {response.status_code} - Время: {process_time:.4f}с",
+                extra=log_context,
+            )
+
+        # Логируем производительность
+        log_performance(f"http_request_{request.method}_{request.url.path}", process_time, log_context)
+
+        return response
 
     except Exception as e:
         process_time = time.time() - start_time
         logger.exception(
-            f"[{request_id}] Request failed: {request.method} {request.url.path} - "
-            f"Took: {process_time:.4f}s - Error: {str(e)}"
+            f"[{request_id}] Необработанная ошибка: {request.method} {request.url.path} - "
+            f"Время: {process_time:.4f}с",
+            exc_info=True,
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "error": str(e),
+                "process_time": process_time,
+            },
         )
-        raise e
-    return response
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Внутренняя ошибка сервера"},
+        )
 
 
-# Обработчик наших пользовательских исключений
+# Обработчик пользовательских исключений
 @app.exception_handler(BookPortalException)
 async def book_portal_exception_handler(request: Request, exc: BookPortalException):
-    """Обработчик исключений приложения"""
+    """Обработчик исключений BookPortalException"""
     log_business_error(
-        error=exc,
-        operation=request.url.path,
+        message=str(exc),
         context={
+            "request_id": request.headers.get("X-Request-ID", "-"),
             "method": request.method,
-            "url": str(request.url),
-            "client": request.client.host if request.client else "Unknown",
+            "path": request.url.path,
         },
     )
     return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.message},
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": str(exc)},
     )
 
 
-# Обработчик ошибок валидации Pydantic
+# Обработчик ошибок валидации
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    errors = exc.errors()
-    error_messages = []
-
-    for error in errors:
-        error_messages.append(
-            {
-                "loc": error.get("loc", []),
-                "msg": error.get("msg", ""),
-                "type": error.get("type", ""),
-                "input": error.get("input", None),
-            }
-        )
-
+    """Обработчик ошибок валидации запросов"""
     log_validation_error(
-        exc,
-        model_name=request.url.path.split("/")[-1],
-        field=error_messages[0].get("loc", [])[-1] if error_messages else None,
+        "request_validation_error",
+        error=exc,
+        context={
+            "request_id": request.headers.get("X-Request-ID", "-"),
+            "method": request.method,
+            "path": request.url.path,
+        },
     )
-
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "error_code": "validation_error",
-            "message": "Ошибка валидации данных",
-            "details": error_messages,
-            "path": request.url.path,
-            "timestamp": time.time(),
-        },
-    )
-
-
-# Обработчик ошибок 404 Not Found
-@app.exception_handler(status.HTTP_404_NOT_FOUND)
-async def not_found_exception_handler(request: Request, exc: Exception):
-    log_warning(
-        f"Resource not found: {request.method} {request.url.path}",
-        context={
-            "client": request.client.host if request.client else "Unknown",
-            "user_agent": request.headers.get("user-agent", "Unknown"),
-            "query_params": dict(request.query_params),
-        },
-    )
-    return JSONResponse(
-        status_code=status.HTTP_404_NOT_FOUND,
-        content={
-            "error_code": "not_found",
-            "message": "Запрашиваемый ресурс не найден",
-            "path": request.url.path,
-            "timestamp": time.time(),
-        },
-    )
-
-
-# Обработчик ошибок 405 Method Not Allowed
-@app.exception_handler(status.HTTP_405_METHOD_NOT_ALLOWED)
-async def method_not_allowed_exception_handler(request: Request, exc: Exception):
-    log_warning(
-        f"Method not allowed: {request.method} {request.url.path}",
-        context={
-            "client": request.client.host if request.client else "Unknown",
-            "user_agent": request.headers.get("user-agent", "Unknown"),
-            "query_params": dict(request.query_params),
-        },
-    )
-    return JSONResponse(
-        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
-        content={
-            "error_code": "method_not_allowed",
-            "message": "Метод не разрешен",
-            "path": request.url.path,
-            "timestamp": time.time(),
-        },
-    )
-
-
-# Обработчик ошибок 429 Too Many Requests
-@app.exception_handler(status.HTTP_429_TOO_MANY_REQUESTS)
-async def too_many_requests_exception_handler(request: Request, exc: Exception):
-    log_warning(
-        f"Too many requests: {request.method} {request.url.path}",
-        context={
-            "client": request.client.host if request.client else "Unknown",
-            "user_agent": request.headers.get("user-agent", "Unknown"),
-            "query_params": dict(request.query_params),
-        },
-    )
-    return JSONResponse(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        content={
-            "error_code": "too_many_requests",
-            "message": "Слишком много запросов",
-            "path": request.url.path,
-            "timestamp": time.time(),
-        },
+        content={"detail": exc.errors()},
     )
 
 
@@ -262,74 +286,54 @@ async def too_many_requests_exception_handler(request: Request, exc: Exception):
 @app.exception_handler(SQLAlchemyError)
 async def database_exception_handler(request: Request, exc: SQLAlchemyError):
     """Обработчик ошибок базы данных"""
-    if isinstance(exc, IntegrityError):
-        if "users_email_key" in str(exc) or "ix_users_email" in str(exc):
-            return JSONResponse(
-                status_code=status.HTTP_409_CONFLICT,
-                content={
-                    "error_code": "duplicate_email",
-                    "message": "Пользователь с таким email уже существует",
-                    "path": request.url.path,
-                    "timestamp": time.time(),
-                },
-            )
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content={
-                "error_code": "integrity_error",
-                "message": "Ошибка целостности данных",
-                "path": request.url.path,
-                "timestamp": time.time(),
-            },
-        )
-
     log_db_error(
         exc,
-        {
-            "component": "database",
+        operation="database_operation",
+        context={
+            "request_id": request.headers.get("X-Request-ID", "-"),
             "method": request.method,
-            "url": str(request.url),
-            "client": request.client.host if request.client else "Unknown",
-            "error_type": type(exc).__name__,
-            "error_details": str(exc),
+            "path": request.url.path,
         },
     )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "error_code": "database_error",
-            "message": "Ошибка базы данных",
-            "path": request.url.path,
-            "timestamp": time.time(),
-        },
+        content={"detail": "Ошибка базы данных"},
     )
 
 
-# Общий обработчик непредвиденных ошибок (500)
+# Обработчик общих исключений
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    """Обработчик всех необработанных исключений"""
-    log_critical_error(
-        exc,
-        {
-            "component": "general_exception_handler",
-            "path": request.url.path,
+    """Обработчик всех остальных исключений"""
+    logger.exception(
+        f"Необработанное исключение: {str(exc)}",
+        exc_info=True,
+        extra={
+            "request_id": request.headers.get("X-Request-ID", "-"),
             "method": request.method,
-            "client": request.client.host if request.client else "Unknown",
-            "error_type": type(exc).__name__,
-            "error_details": str(exc),
+            "path": request.url.path,
         },
     )
     return JSONResponse(
-        status_code=500,
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Внутренняя ошибка сервера"},
     )
 
 
-# Вывод всех маршрутов приложения для отладки
-for route in app.routes:
-    print(f"ROUTE: {route.path}")
-
-
 if __name__ == "__main__":
-    uvicorn.run(app, host="localhost", port=8000, log_level="debug")
+    logger.info("Starting Uvicorn server...")
+    try:
+        uvicorn.run(
+            "main:app",
+            host=settings.HOST,
+            port=settings.PORT,
+            reload=settings.DEBUG,
+            log_level="debug",  # Устанавливаем уровень логирования в debug
+            access_log=True,  # Включаем логирование доступа
+            workers=1,  # Используем один воркер для отладки
+            loop="asyncio",  # Явно указываем использование asyncio
+            timeout_keep_alive=30,  # Уменьшаем время ожидания keep-alive
+        )
+    except Exception as e:
+        logger.critical(f"Failed to start Uvicorn server: {str(e)}", exc_info=True)
+        raise

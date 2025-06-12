@@ -1,26 +1,32 @@
+import json
 from typing import List, Optional
 
 from auth import current_active_user
-from fastapi import APIRouter, Depends, Query, status
-from models.book import Book, Rating
-from models.user import User
-from pydantic import BaseModel, Field
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.database import get_db
-from app.core.exceptions import (
+from core.database import get_db
+from core.dependencies import get_redis_client
+from core.exceptions import (
     BookNotFoundException,
     DatabaseException,
     InvalidRatingValueException,
     RatingNotFoundException,
 )
-from app.core.logger_config import (
+from core.logger_config import (
+    log_cache_error,
     log_db_error,
     log_info,
     log_warning,
 )
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from models.book import Book, Rating
+from models.user import User
+from pydantic import BaseModel, Field
+from redis import Redis
+from schemas.interactions import RatingResponse
+from services.interactions import InteractionsService
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from utils.json_serializer import deserialize_from_json, serialize_to_json
 
 router = APIRouter(prefix="/ratings", tags=["ratings"])
 
@@ -28,17 +34,6 @@ router = APIRouter(prefix="/ratings", tags=["ratings"])
 class RatingCreate(BaseModel):
     rating: float = Field(..., ge=1.0, le=5.0, description="Оценка книги от 1 до 5")
     comment: Optional[str] = Field(None, max_length=1000, description="Комментарий к оценке")
-
-
-class RatingResponse(BaseModel):
-    id: int
-    book_id: int
-    rating: float
-    comment: Optional[str] = None
-    user_id: int
-
-    class Config:
-        from_attributes = True
 
 
 @router.post("/{book_id}", response_model=RatingResponse, status_code=status.HTTP_201_CREATED)
@@ -197,3 +192,198 @@ async def get_user_ratings(
     except Exception as e:
         log_db_error(e, operation="get_user_ratings", table="ratings", user_id=current_user.id)
         raise DatabaseException("Ошибка при получении списка оценок")
+
+
+@router.get("/{rating_id}", response_model=RatingResponse)
+async def get_rating(
+    rating_id: int,
+    db: AsyncSession = Depends(get_db),
+    redis_client: Redis = Depends(get_redis_client),
+) -> RatingResponse:
+    """
+    Получение рейтинга по ID.
+
+    Args:
+        rating_id: ID рейтинга
+        db: Сессия базы данных
+        redis_client: Клиент Redis
+
+    Returns:
+        RatingResponse: Информация о рейтинге
+
+    Raises:
+        HTTPException: Если рейтинг не найден или произошла ошибка
+    """
+    try:
+        # Пытаемся получить из кэша
+        if redis_client is not None:
+            try:
+                cache_key = f"rating:{rating_id}"
+                cached_rating = await redis_client.get(cache_key)
+                if cached_rating:
+                    try:
+                        rating_data = deserialize_from_json(cached_rating)
+                        log_info(f"Successfully retrieved rating {rating_id} from cache")
+                        return RatingResponse(**rating_data)
+                    except json.JSONDecodeError as e:
+                        log_cache_error(
+                            e,
+                            {
+                                "operation": "parse_cached_rating",
+                                "key": cache_key,
+                                "error_type": type(e).__name__,
+                                "error_details": str(e),
+                            },
+                        )
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "get_rating",
+                        "key": cache_key,
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        # Получаем рейтинг из БД
+        interactions_service = InteractionsService(db)
+        ratings = await interactions_service.get_user_ratings(user_id=None, book_id=rating_id)
+        if not ratings:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Рейтинг с ID {rating_id} не найден")
+
+        # Преобразуем в Pydantic модель
+        rating_response = RatingResponse.model_validate(ratings[0])
+
+        # Сохраняем в кэш
+        if redis_client is not None:
+            try:
+                await redis_client.set(
+                    cache_key,
+                    serialize_to_json(rating_response),
+                    expire=3600,  # 1 час
+                )
+                log_info(f"Successfully cached rating {rating_id}")
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "cache_rating",
+                        "key": cache_key,
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        return rating_response
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_db_error(
+            e,
+            {
+                "operation": "get_rating",
+                "rating_id": rating_id,
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка при получении рейтинга")
+
+
+@router.get("/", response_model=List[RatingResponse])
+async def get_ratings(
+    skip: int = Query(0, ge=0, description="Количество пропускаемых записей"),
+    limit: int = Query(10, ge=1, le=100, description="Максимальное количество записей"),
+    db: AsyncSession = Depends(get_db),
+    redis_client: Redis = Depends(get_redis_client),
+) -> List[RatingResponse]:
+    """
+    Получение списка рейтингов с пагинацией.
+
+    Args:
+        skip: Количество пропускаемых записей
+        limit: Максимальное количество записей
+        db: Сессия базы данных
+        redis_client: Клиент Redis
+
+    Returns:
+        List[RatingResponse]: Список рейтингов
+
+    Raises:
+        HTTPException: Если произошла ошибка при получении рейтингов
+    """
+    try:
+        # Пытаемся получить из кэша
+        if redis_client is not None:
+            try:
+                cache_key = f"ratings:list:{skip}:{limit}"
+                cached_ratings = await redis_client.get(cache_key)
+                if cached_ratings:
+                    try:
+                        ratings_data = deserialize_from_json(cached_ratings)
+                        log_info(f"Successfully retrieved {len(ratings_data)} ratings from cache")
+                        return [RatingResponse(**rating) for rating in ratings_data]
+                    except json.JSONDecodeError as e:
+                        log_cache_error(
+                            e,
+                            {
+                                "operation": "parse_cached_ratings",
+                                "key": cache_key,
+                                "error_type": type(e).__name__,
+                                "error_details": str(e),
+                            },
+                        )
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "get_ratings",
+                        "key": cache_key,
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        # Получаем рейтинги из БД
+        interactions_service = InteractionsService(db)
+        ratings = await interactions_service.get_book_ratings(book_id=None, skip=skip, limit=limit)
+
+        # Преобразуем в Pydantic модели
+        rating_responses = [RatingResponse.model_validate(rating) for rating in ratings]
+
+        # Сохраняем в кэш
+        if redis_client is not None:
+            try:
+                await redis_client.set(
+                    cache_key,
+                    serialize_to_json(rating_responses),
+                    expire=3600,  # 1 час
+                )
+                log_info(f"Successfully cached {len(rating_responses)} ratings")
+            except Exception as e:
+                log_cache_error(
+                    e,
+                    {
+                        "operation": "cache_ratings",
+                        "key": cache_key,
+                        "error_type": type(e).__name__,
+                        "error_details": str(e),
+                    },
+                )
+
+        return rating_responses
+    except Exception as e:
+        log_db_error(
+            e,
+            {
+                "operation": "get_ratings",
+                "skip": skip,
+                "limit": limit,
+                "error_type": type(e).__name__,
+                "error_details": str(e),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка при получении списка рейтингов"
+        )

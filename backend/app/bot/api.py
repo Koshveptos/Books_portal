@@ -1,9 +1,12 @@
-import logging
-from typing import Any, Dict
+"""
+API клиент для взаимодействия с бэкендом книжного портала.
+"""
+
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-logger = logging.getLogger(__name__)
+from app.core.logger_config import logger
 
 
 class BooksPortalAPI:
@@ -41,26 +44,55 @@ class BooksPortalAPI:
 
                 return data
         except aiohttp.ClientError as e:
+            logger.error(f"Network error during API request: {str(e)}")
             raise Exception(f"Network error: {str(e)}")
 
-    async def search_books(self, query: str, page: int = 1, limit: int = 10) -> dict:
+    async def search_books(self, query: str, page: int = 1, limit: int = 5) -> dict:
         """Поиск книг"""
         params = {"q": query, "page": page, "limit": limit}
-        books = await self._make_request("GET", "/search", params=params)
+        return await self._make_request("GET", "/books/search", params=params)
 
-        # Преобразуем список книг в формат с пагинацией
-        if isinstance(books, list):
-            return {"items": books, "total": len(books), "page": page, "size": limit}
-        return books
-
-    async def get_catalog(self, page: int = 1, limit: int = 10) -> dict:
-        """Получить каталог книг"""
+    async def get_books(self, page: int = 1, limit: int = 5) -> dict:
+        """Получить список книг"""
         params = {"page": page, "limit": limit}
         return await self._make_request("GET", "/books", params=params)
 
-    async def get_book_details(self, book_id: int) -> dict:
-        """Получить детальную информацию о книге"""
+    async def get_book(self, book_id: int) -> Optional[dict]:
+        """Получить информацию о книге"""
         return await self._make_request("GET", f"/books/{book_id}")
+
+    async def get_categories(self) -> List[dict]:
+        """Получить список категорий"""
+        return await self._make_request("GET", "/categories")
+
+    async def get_books_by_category(self, category_id: int, page: int = 1, limit: int = 5) -> dict:
+        """Получить книги по категории"""
+        params = {"page": page, "limit": limit}
+        return await self._make_request("GET", f"/categories/{category_id}/books", params=params)
+
+    async def get_authors(self) -> List[dict]:
+        """Получить список авторов"""
+        return await self._make_request("GET", "/authors")
+
+    async def get_books_by_author(self, author_id: int, page: int = 1, limit: int = 5) -> dict:
+        """Получить книги автора"""
+        params = {"page": page, "limit": limit}
+        return await self._make_request("GET", f"/authors/{author_id}/books", params=params)
+
+    async def get_recommendations(self, limit: int = 5) -> List[dict]:
+        """Получить рекомендации книг"""
+        params = {"limit": limit}
+        return await self._make_request("GET", "/books/recommendations", params=params)
+
+    async def rate_book(self, book_id: int, rating: int) -> bool:
+        """Оценить книгу"""
+        data = {"rating": rating}
+        try:
+            await self._make_request("POST", f"/books/{book_id}/rate", json=data)
+            return True
+        except Exception as e:
+            logger.error(f"Error rating book: {str(e)}")
+            return False
 
     async def get_book_authors(self, book_id: int) -> list:
         """Получить список авторов книги"""
@@ -117,11 +149,6 @@ class BooksPortalAPI:
         except Exception as e:
             logger.error(f"Telegram linking failed: {str(e)}")
             raise ValueError(f"Ошибка привязки Telegram: {str(e)}")
-
-    async def rate_book(self, book_id: int, rating: int) -> Dict:
-        """Оценка книги"""
-        data = {"rating": rating}
-        return await self._make_request("POST", f"/books/{book_id}/rate", data=data)
 
     async def toggle_favorite(self, book_id: int) -> Dict:
         """Добавление/удаление книги из избранного"""

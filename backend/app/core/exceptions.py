@@ -1,3 +1,5 @@
+from typing import Any, Dict, Optional
+
 from fastapi import status
 
 
@@ -7,18 +9,54 @@ class BookPortalException(Exception):
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
     error_code: str = "internal_error"
     message: str = "Внутренняя ошибка сервера"
+    details: Optional[Dict[str, Any]] = None
 
-    def __init__(self, message: str = None, status_code: int = None, error_code: str = None):
+    def __init__(
+        self, message: str = None, status_code: int = None, error_code: str = None, details: Dict[str, Any] = None
+    ):
         if message:
             self.message = message
         if status_code:
             self.status_code = status_code
         if error_code:
             self.error_code = error_code
+        if details:
+            self.details = details
         super().__init__(self.message)
 
-    def to_dict(self):
-        return {"error_code": self.error_code, "message": self.message}
+    def to_dict(self) -> Dict[str, Any]:
+        """Преобразует исключение в словарь для ответа API"""
+        response = {"error_code": self.error_code, "message": self.message}
+        if self.details:
+            response["details"] = self.details
+        return response
+
+    def with_details(self, details: Dict[str, Any]) -> "BookPortalException":
+        """Добавляет детали к исключению"""
+        self.details = details
+        return self
+
+    def with_message(self, message: str) -> "BookPortalException":
+        """Обновляет сообщение исключения"""
+        self.message = message
+        return self
+
+    def with_status_code(self, status_code: int) -> "BookPortalException":
+        """Обновляет код статуса исключения"""
+        self.status_code = status_code
+        return self
+
+    def with_error_code(self, error_code: str) -> "BookPortalException":
+        """Обновляет код ошибки исключения"""
+        self.error_code = error_code
+        return self
+
+    def __str__(self) -> str:
+        """Строковое представление исключения"""
+        result = f"{self.error_code}: {self.message}"
+        if self.details:
+            result += f" (Details: {self.details})"
+        return result
 
 
 # Ошибки аутентификации и авторизации
@@ -315,3 +353,36 @@ class ResourceNotFoundException(BookPortalException):
     status_code = status.HTTP_404_NOT_FOUND
     error_code = "resource_not_found"
     message = "Запрашиваемый ресурс не найден"
+
+
+# Ошибки, связанные с сессиями базы данных
+class DatabaseSessionException(BookPortalException):
+    """Ошибка сессии базы данных"""
+
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    error_code = "database_session_error"
+    message = "Ошибка при работе с сессией базы данных"
+
+
+class DatabaseConnectionException(BookPortalException):
+    """Ошибка подключения к базе данных"""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    error_code = "database_connection_error"
+    message = "Ошибка подключения к базе данных"
+
+
+class DatabaseInitializationException(BookPortalException):
+    """Ошибка инициализации базы данных"""
+
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    error_code = "database_initialization_error"
+    message = "Ошибка при инициализации базы данных"
+
+
+class DatabaseTransactionException(BookPortalException):
+    """Ошибка транзакции базы данных"""
+
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    error_code = "database_transaction_error"
+    message = "Ошибка при выполнении транзакции базы данных"
